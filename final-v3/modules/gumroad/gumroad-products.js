@@ -45,9 +45,9 @@ function writeProductContent(nicheName, productType, price) {
       return {
         name:        nicheName + " Starter Guide",
         tagline:     "Everything you need to get started",
-        description: "A comprehensive guide covering the most important aspects of " + nicheName + ". Perfect for beginners and intermediate users looking to level up.",
+        description: "A comprehensive guide covering " + nicheName + ". Perfect for beginners looking to level up.",
         bullets:     ["Step by step instructions", "Proven strategies", "Easy to follow format"],
-        thank_you:   "Thank you for your purchase! Reach out if you have any questions.",
+        thank_you:   "Thank you for your purchase!",
         keywords:    [nicheName, "guide", "toolkit"],
       };
     }
@@ -57,7 +57,7 @@ function writeProductContent(nicheName, productType, price) {
       return {
         name:        nicheName + " Starter Guide",
         tagline:     "Everything you need to get started",
-        description: "A comprehensive guide for " + nicheName + ". Covers the key strategies and tools you need to succeed.",
+        description: "A comprehensive guide for " + nicheName + ".",
         bullets:     ["Step by step instructions", "Proven strategies", "Easy to follow format"],
         thank_you:   "Thank you for your purchase!",
         keywords:    [nicheName, "guide", "toolkit"],
@@ -92,19 +92,18 @@ function createGumroadListing(content, price) {
     return Promise.resolve({ status: "manual", url: null });
   }
 
-  var name        = (content.name || "Digital Guide").replace(/[^\w\s\-]/g, "").slice(0, 80).trim();
-  var description = (content.description || "A helpful digital guide.").replace(/[^\w\s\-.,!?]/g, "").slice(0, 500).trim();
-  var receipt     = (content.thank_you || "Thank you for your purchase!").replace(/[^\w\s\-.,!?]/g, "").slice(0, 150).trim();
-  var tags        = (content.keywords || []).slice(0, 3).join(",");
+  var name        = (content.name || "Digital Guide").slice(0, 80).trim();
+  var description = (content.description || "A helpful digital guide.").slice(0, 500).trim();
+  var receipt     = (content.thank_you || "Thank you for your purchase!").slice(0, 150).trim();
 
-  // access_token goes in the body — NOT in Authorization header
-  var postData = "access_token=" + encodeURIComponent(config.gumroad.api_key) +
-    "&name=" + encodeURIComponent(name) +
-    "&description=" + encodeURIComponent(description) +
-    "&price=" + Math.round(price * 100) +
-    "&published=true" +
-    "&tags=" + encodeURIComponent(tags) +
-    "&custom_receipt=" + encodeURIComponent(receipt);
+  // Send as JSON with Bearer token in Authorization header
+  var body = JSON.stringify({
+    name:           name,
+    description:    description,
+    price:          Math.round(price * 100),
+    published:      true,
+    custom_receipt: receipt,
+  });
 
   console.log("     → Creating Gumroad listing: " + name + " at $" + price);
 
@@ -114,15 +113,17 @@ function createGumroadListing(content, price) {
       path:     "/v2/products",
       method:   "POST",
       headers: {
-        "Content-Type":   "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(postData),
+        "Authorization": "Bearer " + config.gumroad.api_key,
+        "Content-Type":  "application/json",
+        "Content-Length": Buffer.byteLength(body),
       },
     };
     var req = https.request(options, function(res) {
       var data = "";
       res.on("data", function(c) { data += c; });
       res.on("end", function() {
-        console.log("     → Gumroad response: " + data.slice(0, 200));
+        console.log("     → Gumroad status: " + res.statusCode);
+        console.log("     → Gumroad response: " + data.slice(0, 300));
         try {
           var r = JSON.parse(data);
           if (r.success) {
@@ -132,32 +133,32 @@ function createGumroadListing(content, price) {
             resolve({ status:"api_error", error:r.message, url:null });
           }
         } catch(e) {
-          console.log("     → Gumroad parse error. Raw: " + data.slice(0, 300));
+          console.log("     → Could not parse response");
           resolve({ status:"parse_error", url:null });
         }
       });
     });
     req.on("error", function(e) {
-      console.log("     → Gumroad network error: " + e.message);
+      console.log("     → Network error: " + e.message);
       resolve({ status:"network_error", url:null });
     });
-    req.write(postData);
+    req.write(body);
     req.end();
   });
 }
 
 function updateGumroadPrice(productId, newPrice) {
   if (!config.gumroad || !config.gumroad.api_key || !productId) return Promise.resolve();
-  var postData = "access_token=" + encodeURIComponent(config.gumroad.api_key) +
-    "&price=" + Math.round(newPrice * 100);
+  var body = JSON.stringify({ price: Math.round(newPrice * 100) });
   return new Promise(function(resolve) {
     var opts = {
       hostname: "api.gumroad.com",
       path:     "/v2/products/" + productId,
       method:   "PUT",
       headers: {
-        "Content-Type":   "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(postData),
+        "Authorization": "Bearer " + config.gumroad.api_key,
+        "Content-Type":  "application/json",
+        "Content-Length": Buffer.byteLength(body),
       },
     };
     var req = https.request(opts, function(res) {
@@ -165,7 +166,7 @@ function updateGumroadPrice(productId, newPrice) {
       res.on("end", function() { try { resolve(JSON.parse(d)); } catch(e) { resolve(null); } });
     });
     req.on("error", function() { resolve(null); });
-    req.write(postData); req.end();
+    req.write(body); req.end();
   });
 }
 
