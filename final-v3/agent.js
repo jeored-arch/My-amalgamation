@@ -49,7 +49,7 @@ async function main() {
   vault.validateSetup();
 
   if (isPaused()) {
-    console.log(c("yellow","\n  ⏸  Agent is paused. Send "resume" to your Telegram bot to restart.\n"));
+    console.log(c("yellow", "Agent is paused. Send resume to your Telegram bot to restart."));
     await notify.sendTelegram("⏸ Agent is paused. Send \"resume\" to restart it.").catch(()=>{});
     return;
   }
