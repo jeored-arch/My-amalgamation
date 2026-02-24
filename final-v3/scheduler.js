@@ -76,7 +76,10 @@ console.log("Running agent now for first time...");
 startBot();
 setInterval(tick, 30000);
 
-// Wait 15 seconds for bot to start then run agent immediately
+// Only run immediately if never run before
+var stateFile = require("path").join(__dirname, "data", "state.json");
 setTimeout(function() {
-  runAgent();
+  if (!require("fs").existsSync(stateFile)) {
+    runAgent();
+  }
 }, 15000);
