@@ -38,13 +38,10 @@ function writeProductContent(nicheName, productType, price) {
     }],
   }).then(function(res) {
     var text = res.content[0].text.trim();
-    // Remove any markdown formatting
     text = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    // Extract just the JSON object
     var start = text.indexOf("{");
     var end   = text.lastIndexOf("}");
     if (start === -1 || end === -1) {
-      // If no JSON found, build a simple one manually
       return {
         name:        nicheName + " Starter Guide",
         tagline:     "Everything you need to get started",
@@ -57,7 +54,6 @@ function writeProductContent(nicheName, productType, price) {
     try {
       return JSON.parse(text.slice(start, end + 1));
     } catch(e) {
-      // JSON parse failed — return safe fallback
       return {
         name:        nicheName + " Starter Guide",
         tagline:     "Everything you need to get started",
@@ -96,13 +92,14 @@ function createGumroadListing(content, price) {
     return Promise.resolve({ status: "manual", url: null });
   }
 
-  // Build safe values — strip any special characters that could break the API
   var name        = (content.name || "Digital Guide").replace(/[^\w\s\-]/g, "").slice(0, 80).trim();
   var description = (content.description || "A helpful digital guide.").replace(/[^\w\s\-.,!?]/g, "").slice(0, 500).trim();
   var receipt     = (content.thank_you || "Thank you for your purchase!").replace(/[^\w\s\-.,!?]/g, "").slice(0, 150).trim();
   var tags        = (content.keywords || []).slice(0, 3).join(",");
 
-  var postData = "name=" + encodeURIComponent(name) +
+  // access_token goes in the body — NOT in Authorization header
+  var postData = "access_token=" + encodeURIComponent(config.gumroad.api_key) +
+    "&name=" + encodeURIComponent(name) +
     "&description=" + encodeURIComponent(description) +
     "&price=" + Math.round(price * 100) +
     "&published=true" +
@@ -117,7 +114,6 @@ function createGumroadListing(content, price) {
       path:     "/v2/products",
       method:   "POST",
       headers: {
-        "Authorization":  "Bearer " + config.gumroad.api_key,
         "Content-Type":   "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(postData),
       },
@@ -152,12 +148,14 @@ function createGumroadListing(content, price) {
 
 function updateGumroadPrice(productId, newPrice) {
   if (!config.gumroad || !config.gumroad.api_key || !productId) return Promise.resolve();
-  var postData = "price=" + Math.round(newPrice * 100);
+  var postData = "access_token=" + encodeURIComponent(config.gumroad.api_key) +
+    "&price=" + Math.round(newPrice * 100);
   return new Promise(function(resolve) {
     var opts = {
-      hostname: "api.gumroad.com", path: "/v2/products/" + productId, method: "PUT",
+      hostname: "api.gumroad.com",
+      path:     "/v2/products/" + productId,
+      method:   "PUT",
       headers: {
-        "Authorization":  "Bearer " + config.gumroad.api_key,
         "Content-Type":   "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(postData),
       },
@@ -218,7 +216,7 @@ function run(nicheName) {
 
       var msg = listing.url
         ? "Gumroad Product Live!\n\n" + content.name + "\nPrice: $" + pi.price + "\nLink: " + listing.url
-        : "Product saved locally.\nName: " + content.name + "\nPrice: $" + pi.price + "\nGumroad API returned: " + listing.status + "\nCheck Railway logs for details.";
+        : "Product saved locally.\nName: " + content.name + "\nPrice: $" + pi.price + "\nStatus: " + listing.status;
 
       return notify.sendTelegram(msg).then(function() { return product; });
     });
