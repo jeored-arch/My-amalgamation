@@ -1,0 +1,16 @@
+/**
+ * railway.json — Railway.app deployment config
+ * The agent runs 24/7 in the cloud even when your PC is off.
+ * Cost: ~$5/mo — paid from agent's 40% budget after month 1.
+ */
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "node -r dotenv/config agent.js",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5
+  }
+}

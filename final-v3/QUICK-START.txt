@@ -1,0 +1,41 @@
+════════════════════════════════════════════════════════════════
+  🤖  AUTONOMOUS BUSINESS AGENT v4 — QUICK START
+  Smart Niche · Auto-Pivot · 24/7 Cloud · No PC Required
+════════════════════════════════════════════════════════════════
+
+HOW THE NICHE SYSTEM WORKS
+──────────────────────────────────────────────────────────────
+Day 1:   Agent scores 20+ niches on 5 criteria, picks the best,
+         Telegrams you what it chose + why.
+
+Weekly:  Checks if niche is performing. Auto-pivots if:
+         - Under 3 Gumroad sales after 30 days
+         - Under 200 YouTube views after 45 days
+         - Revenue growth stalled for 90 days
+
+Pivot:   Picks next best niche, avoids all previous failures,
+         Telegrams you the switch. You do nothing.
+
+HOW CLOUD (Railway) WORKS
+──────────────────────────────────────────────────────────────
+  Runs 24/7 — PC off, moving, at work — doesnt matter
+  8am daily: agent runs, then sleeps
+  Sundays 9am: niche health check + auto-pivot if needed
+  Dashboard: check from phone, work laptop, anywhere
+  Cost: ~$5/mo — Month 1 you pay, Month 2+ agent's 40% pays
+
+YOUR MONEY SPLIT
+──────────────────────────────────────────────────────────────
+  $0-$2,999/mo    You 60% | Agent 40%
+  $3,000-$6,999   You 65% | Agent 35%
+  $7,000+         You 70% | Agent 30%
+
+SETUP (one time, ~45 min)
+──────────────────────────────────────────────────────────────
+  1. Create accounts: gumroad.com, resend.com,
+     console.anthropic.com, Telegram @BotFather, railway.app
+  2. Add bank to Gumroad NOW (takes 1-2 days to verify)
+  3. Run: node INSTALL.js
+  4. Done. Agent handles everything from here.
+
+════════════════════════════════════════════════════════════════
