@@ -35,7 +35,7 @@ function writeProductContent(nicheName, productType, price) {
   };
   return client.messages.create({
     model: config.anthropic.model,
-    max_tokens: 3000,
+    max_tokens: 1500,
     system: "You are an expert digital product creator. Write products that genuinely help people and convert browsers into buyers. Real useful content, no filler.",
     messages: [{ role: "user", content:
       "Create a complete digital product for the niche: " + nicheName + "\n" +
