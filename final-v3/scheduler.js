@@ -1,6 +1,6 @@
 require("dotenv").config();
 const { execSync, spawn } = require("child_process");
-const TZ = process.env.TZ || "America/Chicago";
+const TZ = process.env.TZ || "America/New_York";
 
 function nowIn(tz) { return new Date(new Date().toLocaleString("en-US", { timeZone: tz })); }
 function padded(n) { return String(n).padStart(2, "0"); }
@@ -31,7 +31,7 @@ function startBot() {
 function runAgent() {
   if (isRunning) { return; }
   isRunning = true;
-  console.log("Starting daily agent run...");
+  console.log("Starting agent run...");
   try {
     execSync("node -r dotenv/config agent.js", {
       stdio: "inherit",
@@ -71,6 +71,12 @@ function tick() {
 
 console.log("Scheduler starting on Railway...");
 console.log("Daily agent: 8am " + TZ);
+console.log("Running agent now for first time...");
+
 startBot();
 setInterval(tick, 30000);
-tick();
+
+// Wait 15 seconds for bot to start then run agent immediately
+setTimeout(function() {
+  runAgent();
+}, 15000);
