@@ -39,7 +39,6 @@ function saveState(s) {
   fs.writeFileSync(STATE_FILE, JSON.stringify({...s, last_run:new Date().toISOString()},null,2));
 }
 
-// Check if agent is paused
 function isPaused() {
   return fs.existsSync(path.join(DATA_DIR,"paused.flag"));
 }
@@ -50,11 +49,11 @@ async function main() {
 
   if (isPaused()) {
     console.log(c("yellow", "Agent is paused. Send resume to your Telegram bot to restart."));
-    await notify.sendTelegram("⏸ Agent is paused. Send \"resume\" to restart it.").catch(()=>{});
+    await notify.sendTelegram("Agent is paused. Send resume to restart it.").catch(()=>{});
     return;
   }
 
-  // ── NICHE ────────────────────────────────────────────────────────────────
+  // ── NICHE ─────────────────────────────────────────────────────────────────
   inf("Checking niche...");
   const currentNiche = await niche.initializeNiche();
   const nicheStatus  = niche.getNicheStatus();
@@ -74,9 +73,15 @@ async function main() {
   // ── GUMROAD PRODUCT ───────────────────────────────────────────────────────
   console.log(c("cyan","\n  🛍️  Gumroad product..."));
   try {
-    const product = await gumroad.run(currentNiche);
+    const productUrl  = process.env.MANUAL_PRODUCT_URL || null;
+    const productName = process.env.MANUAL_PRODUCT_NAME || "Credit Score Kickstart Kit";
+    const productPrice = parseFloat(process.env.MANUAL_PRODUCT_PRICE || "7");
+    const product = { name: productName, price: productPrice, url: productUrl, status: "manual" };
     state.product_url = product.url;
-    ok(`Product: "${product.name}" at $${product.price} — ${product.status}`);
+    ok(`Product: "${product.name}" at $${product.price} — live at ${product.url || "no URL set"}`);
+    if (productUrl) {
+      await notify.sendTelegram("Product live: " + productName + "\n$" + productPrice + "\n" + productUrl).catch(()=>{});
+    }
   } catch(e) { wrn(`Gumroad: ${e.message}`); }
 
   // ── REVENUE ───────────────────────────────────────────────────────────────
@@ -91,7 +96,7 @@ async function main() {
     const { owner_cut, agent_cut, tier } = treasury.processRevenue(totalNew);
     ok(`${newSales.length} sale(s) — gross $${totalNew.toFixed(2)}`);
     console.log(`     Your ${tier.owner}%: ${c("green","$"+owner_cut.toFixed(2))} → bank  |  Agent ${tier.agent}%: $${agent_cut.toFixed(2)} → ops`);
-    await notify.sendTelegram(`💰 <b>${newSales.length} Sale(s)!</b>\nTotal: $${totalNew.toFixed(2)}\nYour cut: <b>$${owner_cut.toFixed(2)}</b>\nTier: ${tier.label}`);
+    await notify.sendTelegram(`💰 ${newSales.length} Sale(s)!\nTotal: $${totalNew.toFixed(2)}\nYour cut: $${owner_cut.toFixed(2)}\nTier: ${tier.label}`);
   } else { inf("No new sales."); }
 
   treasury.payOperatingCosts();
@@ -101,12 +106,12 @@ async function main() {
   for (const mid of autoActivated) {
     const mod = treasury.MODULES[mid];
     ok(`Unlocked: ${mod.name}`);
-    await notify.sendTelegram(`🔓 <b>${mod.name} unlocked!</b>\n${mod.paid?`$${mod.monthly_cost}/mo from agent budget`:"Free"}`);
+    await notify.sendTelegram(`Unlocked: ${mod.name}`);
   }
   for (const mod of treasury.checkUnlockEligibility()) {
     if (treasury.loadUnlocks()[mod.id]?.status==="locked") {
       treasury.initiateUnlock(mod.id);
-      await notify.sendTelegram(`🚀 <b>Module Ready: ${mod.name}</b>\nAuto-activates in 48hrs.\n${mod.paid?`$${mod.monthly_cost}/mo (agent budget)`:"FREE"}`);
+      await notify.sendTelegram(`Module Ready: ${mod.name} — auto-activates in 48hrs`);
     }
   }
 
@@ -115,11 +120,10 @@ async function main() {
   if (unlocks.youtube?.status==="active") {
     console.log(c("cyan","\n  📹 YouTube pipeline..."));
     try {
-      const affLinks  = affiliate.formatForYouTube(currentNiche);
+      const affLinks   = affiliate.formatForYouTube(currentNiche);
       const scriptData = await youtube.run(currentNiche, state.product_url, affLinks);
       state.youtube_videos++;
       ok(`Script: "${scriptData.title}"`);
-
       inf("Building video...");
       const videoResult = await video.buildVideo(scriptData);
       if (videoResult.status==="built") {
@@ -154,10 +158,11 @@ async function main() {
     ["output/content","output/outreach","output/reports"]
       .forEach(d => fs.mkdirSync(path.join(process.cwd(),d),{recursive:true}));
 
-    const affYT    = affiliate.formatForYouTube(currentNiche);
     const affEmail = affiliate.formatForEmail(currentNiche);
     const affBlog  = affiliate.formatForBlog(currentNiche);
-    const prodLine = state.product_url ? `Link to this resource: ${state.product_url}` : "Mention a helpful digital guide.";
+    const prodLine = state.product_url
+      ? `Link to this resource: ${state.product_url}`
+      : "Mention a helpful digital guide.";
 
     const [blogRes, emailRes] = await Promise.all([
       client.messages.create({
@@ -199,7 +204,7 @@ async function main() {
     phase:             fin.tier?.label||"Starter",
     actions:[
       `Niche: "${currentNiche}" (day ${nicheStatus?.days_active||0})`,
-      `Product: "${gmStats.current_product?.name||"creating..."}" at $${gmStats.current_product?.price||"?"}`,
+      `Product: "Credit Score Kickstart Kit" at $7 — ${state.product_url || "no URL"}`,
       `Affiliates: ${affStats.active_programs} programs active — ${affStats.estimated_monthly}`,
       `YouTube: ${ytStats.videos_created} scripts | ${vidStats.videos_built} videos built`,
       `Etsy: ${podStats.products_created} products`,
@@ -215,12 +220,12 @@ async function main() {
   });
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow\n`));
-  console.log(`  Niche:      ${c("cyan",currentNiche)}\n  Product:    ${c("green",gmStats.current_product?.name||"creating")} @ $${gmStats.current_product?.price||"?"}\n  Earned:     ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n  Affiliates: ${affStats.active_programs} active\n  Videos:     ${vidStats.videos_built} built\n`);
+  console.log(`  Niche:      ${c("cyan",currentNiche)}\n  Product:    ${c("green","Credit Score Kickstart Kit")} @ $7\n  URL:        ${state.product_url||"not set"}\n  Earned:     ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n  Affiliates: ${affStats.active_programs} active\n  Videos:     ${vidStats.videos_built} built\n`);
 }
 
 main().catch(async err => {
   vault.auditLog("AGENT_CRASH",{ error:err.message },"alert");
-  await notify.sendTelegram(`🚨 <b>Agent crashed</b>\n${err.message.slice(0,300)}\nRetries tomorrow 8am.`).catch(()=>{});
+  await notify.sendTelegram(`Agent crashed: ${err.message.slice(0,300)}\nRetries tomorrow 8am.`).catch(()=>{});
   console.error(c("red",`\n❌ ${err.message}\n`));
   process.exit(1);
 });
