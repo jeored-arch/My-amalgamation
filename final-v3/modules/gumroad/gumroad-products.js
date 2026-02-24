@@ -27,61 +27,65 @@ function saveState(s) {
 
 function writeProductContent(nicheName, productType, price) {
   console.log("     → Writing product content...");
-  var types = {
-    checklist_bundle: "checklist bundle",
-    pdf_guide:        "PDF guide",
-    template_pack:    "template pack",
-    toolkit:          "toolkit",
-  };
   return client.messages.create({
     model:      config.anthropic.model,
-    max_tokens: 1200,
-    system:     "You create digital products. Return ONLY valid compact JSON. No markdown. No code blocks. No extra text.",
+    max_tokens: 800,
+    system:     "You create digital products. Return ONLY a valid JSON object. No markdown, no code blocks, no explanation. Just the raw JSON.",
     messages: [{ role: "user", content:
-      "Create a digital product.\n" +
-      "Niche: " + nicheName + "\n" +
-      "Type: " + types[productType] + "\n" +
-      "Price: $" + price + "\n\n" +
-      "Return this JSON only (keep each field SHORT):\n" +
-      "{\"name\":\"product name under 50 chars\",\"tagline\":\"one sentence under 12 words\",\"description\":\"150 word description\",\"bullets\":[\"benefit 1\",\"benefit 2\",\"benefit 3\",\"benefit 4\",\"benefit 5\"],\"section1_heading\":\"heading\",\"section1_content\":\"100 words\",\"section2_heading\":\"heading\",\"section2_content\":\"100 words\",\"section3_heading\":\"heading\",\"section3_content\":\"100 words\",\"thank_you\":\"30 word thank you\",\"keywords\":[\"kw1\",\"kw2\",\"kw3\",\"kw4\",\"kw5\"]}"
+      "Niche: " + nicheName + ". Price: $" + price + ".\n" +
+      "Return this exact JSON with short values:\n" +
+      "{\"name\":\"short product name\",\"tagline\":\"short tagline\",\"description\":\"short 100 word description\",\"bullets\":[\"point 1\",\"point 2\",\"point 3\"],\"thank_you\":\"thank you message\",\"keywords\":[\"kw1\",\"kw2\",\"kw3\"]}"
     }],
   }).then(function(res) {
-    var text  = res.content[0].text.trim();
-    // Strip any accidental markdown
-    text = text.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-    // Find the JSON object
+    var text = res.content[0].text.trim();
+    // Remove any markdown formatting
+    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    // Extract just the JSON object
     var start = text.indexOf("{");
     var end   = text.lastIndexOf("}");
-    if (start === -1 || end === -1) throw new Error("No JSON found in response");
-    return JSON.parse(text.slice(start, end + 1));
+    if (start === -1 || end === -1) {
+      // If no JSON found, build a simple one manually
+      return {
+        name:        nicheName + " Starter Guide",
+        tagline:     "Everything you need to get started",
+        description: "A comprehensive guide covering the most important aspects of " + nicheName + ". Perfect for beginners and intermediate users looking to level up.",
+        bullets:     ["Step by step instructions", "Proven strategies", "Easy to follow format"],
+        thank_you:   "Thank you for your purchase! Reach out if you have any questions.",
+        keywords:    [nicheName, "guide", "toolkit"],
+      };
+    }
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch(e) {
+      // JSON parse failed — return safe fallback
+      return {
+        name:        nicheName + " Starter Guide",
+        tagline:     "Everything you need to get started",
+        description: "A comprehensive guide for " + nicheName + ". Covers the key strategies and tools you need to succeed.",
+        bullets:     ["Step by step instructions", "Proven strategies", "Easy to follow format"],
+        thank_you:   "Thank you for your purchase!",
+        keywords:    [nicheName, "guide", "toolkit"],
+      };
+    }
   });
 }
 
 function generatePDF(content, outputPath) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   var bullets = (content.bullets || []).map(function(b) { return "<li>" + b + "</li>"; }).join("");
-  var sections = [1,2,3].map(function(n) {
-    var h = content["section" + n + "_heading"] || "";
-    var c = content["section" + n + "_content"] || "";
-    return h ? "<div class='section'><h2>" + n + ". " + h + "</h2><p>" + c + "</p></div>" : "";
-  }).join("");
-
   var html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" + (content.name||"Guide") + "</title>" +
     "<style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:40px 20px;color:#1a1a2e;line-height:1.8}" +
     "h1{font-size:28px;color:#0d1b2a;border-bottom:3px solid #00d4aa;padding-bottom:12px}" +
-    "h2{font-size:20px;color:#0d1b2a;margin-top:36px}p{margin:12px 0}" +
-    "ul{margin:16px 0;padding-left:24px}li{margin:8px 0}" +
+    "p{margin:12px 0}ul{margin:16px 0;padding-left:24px}li{margin:8px 0}" +
     ".cover{text-align:center;padding:40px 0;border-bottom:1px solid #eee;margin-bottom:32px}" +
     ".tagline{font-size:16px;color:#555;font-style:italic}" +
     ".included{background:#f8f9fa;border-left:4px solid #00d4aa;padding:16px 20px;margin:24px 0}" +
-    ".section{margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid #f0f0f0}" +
     ".footer{margin-top:40px;text-align:center;font-size:13px;color:#999}</style></head><body>" +
     "<div class='cover'><h1>" + (content.name||"Guide") + "</h1><p class='tagline'>" + (content.tagline||"") + "</p></div>" +
     "<div class='included'><strong>What's Inside:</strong><ul>" + bullets + "</ul></div>" +
-    sections +
+    "<p>" + (content.description||"") + "</p>" +
     "<div class='footer'>" + (content.thank_you||"Thank you for your purchase!") + "</div>" +
     "</body></html>";
-
   fs.writeFileSync(outputPath, html);
   return outputPath;
 }
@@ -91,19 +95,27 @@ function createGumroadListing(content, price) {
     console.log("     → No Gumroad key - saved locally");
     return Promise.resolve({ status: "manual", url: null });
   }
-  var desc = (content.description || content.tagline || content.name || "").slice(0, 500);
-  var postData = new URLSearchParams({
-    name:           (content.name || "Digital Guide").slice(0, 100),
-    description:    desc,
-    price:          Math.round(price * 100),
-    published:      "true",
-    tags:           (content.keywords || []).slice(0, 5).join(","),
-    custom_receipt: (content.thank_you || "Thank you!").slice(0, 200),
-  }).toString();
+
+  // Build safe values — strip any special characters that could break the API
+  var name        = (content.name || "Digital Guide").replace(/[^\w\s\-]/g, "").slice(0, 80).trim();
+  var description = (content.description || "A helpful digital guide.").replace(/[^\w\s\-.,!?]/g, "").slice(0, 500).trim();
+  var receipt     = (content.thank_you || "Thank you for your purchase!").replace(/[^\w\s\-.,!?]/g, "").slice(0, 150).trim();
+  var tags        = (content.keywords || []).slice(0, 3).join(",");
+
+  var postData = "name=" + encodeURIComponent(name) +
+    "&description=" + encodeURIComponent(description) +
+    "&price=" + Math.round(price * 100) +
+    "&published=true" +
+    "&tags=" + encodeURIComponent(tags) +
+    "&custom_receipt=" + encodeURIComponent(receipt);
+
+  console.log("     → Creating Gumroad listing: " + name + " at $" + price);
 
   return new Promise(function(resolve) {
     var options = {
-      hostname: "api.gumroad.com", path: "/v2/products", method: "POST",
+      hostname: "api.gumroad.com",
+      path:     "/v2/products",
+      method:   "POST",
       headers: {
         "Authorization":  "Bearer " + config.gumroad.api_key,
         "Content-Type":   "application/x-www-form-urlencoded",
@@ -114,24 +126,33 @@ function createGumroadListing(content, price) {
       var data = "";
       res.on("data", function(c) { data += c; });
       res.on("end", function() {
+        console.log("     → Gumroad response: " + data.slice(0, 200));
         try {
           var r = JSON.parse(data);
           if (r.success) {
             resolve({ status:"published", product_id:r.product.id, url:r.product.short_url||r.product.url, price:price });
           } else {
+            console.log("     → Gumroad error: " + (r.message || JSON.stringify(r)));
             resolve({ status:"api_error", error:r.message, url:null });
           }
-        } catch(e) { resolve({ status:"parse_error", url:null }); }
+        } catch(e) {
+          console.log("     → Gumroad parse error. Raw: " + data.slice(0, 300));
+          resolve({ status:"parse_error", url:null });
+        }
       });
     });
-    req.on("error", function() { resolve({ status:"network_error", url:null }); });
-    req.write(postData); req.end();
+    req.on("error", function(e) {
+      console.log("     → Gumroad network error: " + e.message);
+      resolve({ status:"network_error", url:null });
+    });
+    req.write(postData);
+    req.end();
   });
 }
 
 function updateGumroadPrice(productId, newPrice) {
   if (!config.gumroad || !config.gumroad.api_key || !productId) return Promise.resolve();
-  var postData = new URLSearchParams({ price: Math.round(newPrice * 100) }).toString();
+  var postData = "price=" + Math.round(newPrice * 100);
   return new Promise(function(resolve) {
     var opts = {
       hostname: "api.gumroad.com", path: "/v2/products/" + productId, method: "PUT",
@@ -154,7 +175,6 @@ function run(nicheName) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   var state = loadState();
 
-  // Check for existing product
   var existing = null;
   for (var i = 0; i < state.products.length; i++) {
     if (state.products[i].niche === nicheName && state.products[i].status === "published") {
@@ -169,24 +189,23 @@ function run(nicheName) {
       return updateGumroadPrice(existing.product_id, pd.price).then(function() {
         existing.price = pd.price;
         saveState(state);
-        return notify.sendTelegram("Price Updated\n" + existing.name + "\n$" + existing.price + " to $" + pd.price);
+        return notify.sendTelegram("Price Updated: $" + existing.price + " to $" + pd.price);
       }).then(function() { return existing; });
     }
     return Promise.resolve(existing);
   }
 
-  // Create new product
   console.log("\n  Creating Gumroad product for " + nicheName + "...");
   var pi = calculatePrice(nicheName, state.sales_count);
   console.log("     → Price: $" + pi.price + " — " + pi.reasoning);
 
   return writeProductContent(nicheName, pi.product_type, pi.price).then(function(content) {
     console.log("     → Product: " + content.name);
-    var pdfPath = path.join(OUT_DIR, nicheName.replace(/\s+/g,"-").toLowerCase().slice(0,40) + ".html");
+    var safeName = nicheName.replace(/\s+/g, "-").toLowerCase().slice(0, 40);
+    var pdfPath  = path.join(OUT_DIR, safeName + ".html");
     generatePDF(content, pdfPath);
 
     return createGumroadListing(content, pi.price).then(function(listing) {
-      console.log("     → " + listing.status + " " + (listing.url || "saved locally"));
       var product = {
         niche: nicheName, name: content.name, price: pi.price,
         product_type: pi.product_type, status: listing.status,
@@ -197,15 +216,15 @@ function run(nicheName) {
       state.current_niche = nicheName;
       saveState(state);
 
-      return notify.sendTelegram(
-        "Gumroad Product Created!\n\n" +
-        (content.name || nicheName) + "\nPrice: $" + pi.price + "\n" +
-        (listing.url ? "Live: " + listing.url : "Saved locally — upload manually to Gumroad")
-      ).then(function() { return product; });
+      var msg = listing.url
+        ? "Gumroad Product Live!\n\n" + content.name + "\nPrice: $" + pi.price + "\nLink: " + listing.url
+        : "Product saved locally.\nName: " + content.name + "\nPrice: $" + pi.price + "\nGumroad API returned: " + listing.status + "\nCheck Railway logs for details.";
+
+      return notify.sendTelegram(msg).then(function() { return product; });
     });
   }).catch(function(err) {
-    console.log("     → Product creation failed: " + err.message + " — will retry tomorrow");
-    return { niche: nicheName, name: nicheName, price: pi.price, status: "pending", url: null };
+    console.log("     → Product error: " + err.message);
+    return { niche: nicheName, name: nicheName + " Guide", price: pi.price, status: "error", url: null };
   });
 }
 
