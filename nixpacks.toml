@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs_22", "npm-9_x", "ffmpeg"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = ["npm install", "npm install ffmpeg-static"]
 
 [start]
 cmd = "node -r dotenv/config scheduler.js"
