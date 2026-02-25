@@ -11,7 +11,21 @@ const client   = new Anthropic({ apiKey: config.anthropic.api_key });
 const OUT_DIR  = path.join(process.cwd(), "output", "youtube");
 const DATA_DIR = path.join(process.cwd(), "data", "youtube");
 
-// ── GET FRESH ACCESS TOKEN USING REFRESH TOKEN ────────────────────────────────
+// ── FIND FFMPEG ───────────────────────────────────────────────────────────────
+
+function findFfmpeg() {
+  try {
+    var p = require("ffmpeg-static");
+    if (p) { console.log("     → ffmpeg-static found: " + p); return p; }
+  } catch(e) {}
+  try {
+    var which = require("child_process").execSync("which ffmpeg", { encoding: "utf8" }).trim();
+    if (which) { console.log("     → system ffmpeg found: " + which); return which; }
+  } catch(e) {}
+  return null;
+}
+
+// ── GET FRESH ACCESS TOKEN ────────────────────────────────────────────────────
 
 function getAccessToken() {
   var clientId     = config.youtube.client_id;
@@ -141,8 +155,8 @@ function saveVideoPackage(topic, script, metadata, niche) {
   var videoDir = path.join(OUT_DIR, slug);
   fs.mkdirSync(videoDir, { recursive: true });
 
-  fs.writeFileSync(path.join(videoDir, "script.txt"),     script);
-  fs.writeFileSync(path.join(videoDir, "metadata.json"),  JSON.stringify(metadata, null, 2));
+  fs.writeFileSync(path.join(videoDir, "script.txt"),      script);
+  fs.writeFileSync(path.join(videoDir, "metadata.json"),   JSON.stringify(metadata, null, 2));
   fs.writeFileSync(path.join(videoDir, "description.txt"), metadata.description || "");
 
   var logFile = path.join(DATA_DIR, "videos.json");
@@ -157,52 +171,56 @@ function saveVideoPackage(topic, script, metadata, niche) {
 // ── BUILD MP4 VIDEO ───────────────────────────────────────────────────────────
 
 function buildSimpleVideo(scriptData, outputPath) {
-  // Build a simple slide-based MP4 using ffmpeg if available
-  // Each slide = key point from script displayed for 8 seconds
-  try {
-    var ffmpeg = require("child_process").execSync("which ffmpeg", { encoding: "utf8" }).trim();
-    if (!ffmpeg) return Promise.resolve({ status: "no_ffmpeg" });
+  var ffmpegPath = findFfmpeg();
+  if (!ffmpegPath) {
+    return Promise.resolve({ status: "ffmpeg_unavailable" });
+  }
 
-    var title    = scriptData.title || "AI Tools Video";
-    var lines    = (scriptData.script || title).split("\n").filter(function(l) { return l.trim().length > 20; }).slice(0, 8);
-    var slides   = lines.length > 0 ? lines : [title];
-    var tmpDir   = path.join(process.cwd(), "tmp", "video");
+  try {
+    var exec   = require("child_process").execSync;
+    var title  = scriptData.title || "AI Tools Video";
+    var lines  = (scriptData.script || title).split("\n")
+      .filter(function(l) { return l.trim().length > 20; })
+      .slice(0, 8);
+    var slides = lines.length > 0 ? lines : [title];
+    var tmpDir = path.join(process.cwd(), "tmp", "video");
     fs.mkdirSync(tmpDir, { recursive: true });
 
-    // Create text slides as images using ffmpeg
     var imageFiles = [];
     for (var i = 0; i < slides.length; i++) {
       var imgPath = path.join(tmpDir, "slide" + i + ".png");
-      var text    = slides[i].replace(/"/g, "'").slice(0, 80);
+      var text    = slides[i].replace(/'/g, "").replace(/"/g, "").slice(0, 60);
       try {
-        require("child_process").execSync(
-          "ffmpeg -y -f lavfi -i color=c=0d1b2a:size=1280x720:duration=8 " +
-          "-vf \"drawtext=text='" + text + "':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10\" " +
+        exec(
+          "\"" + ffmpegPath + "\" -y -f lavfi -i color=c=0d1b2a:size=1280x720:duration=8 " +
+          "-vf \"drawtext=text='" + text + "':fontcolor=white:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2\" " +
           "-frames:v 1 " + imgPath,
           { stdio: "pipe" }
         );
         imageFiles.push(imgPath);
-      } catch(e) { /* skip this slide */ }
+      } catch(e) { /* skip failed slide */ }
     }
 
-    if (imageFiles.length === 0) return Promise.resolve({ status: "no_slides" });
+    if (imageFiles.length === 0) {
+      return Promise.resolve({ status: "no_slides" });
+    }
 
-    // Combine slides into video
-    var listFile = path.join(tmpDir, "slides.txt");
+    var listFile    = path.join(tmpDir, "slides.txt");
     var listContent = imageFiles.map(function(f) {
       return "file '" + f + "'\nduration 8";
     }).join("\n");
     fs.writeFileSync(listFile, listContent);
 
-    require("child_process").execSync(
-      "ffmpeg -y -f concat -safe 0 -i " + listFile + " -vf fps=30 -c:v libx264 -pix_fmt yuv420p " + outputPath,
+    exec(
+      "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -vf fps=30 -c:v libx264 -pix_fmt yuv420p \"" + outputPath + "\"",
       { stdio: "pipe" }
     );
 
     var stats = fs.statSync(outputPath);
     return Promise.resolve({ status: "built", path: outputPath, size_mb: (stats.size / 1024 / 1024).toFixed(1) });
   } catch(e) {
-    return Promise.resolve({ status: "ffmpeg_unavailable", message: e.message });
+    console.log("     → Video build error: " + e.message.slice(0, 100));
+    return Promise.resolve({ status: "build_error", message: e.message.slice(0, 100) });
   }
 }
 
@@ -278,7 +296,7 @@ function uploadVideo(videoFilePath, scriptData) {
             try {
               var result = JSON.parse(body);
               if (result.id) {
-                console.log("     → Uploaded! https://youtu.be/" + result.id);
+                console.log("     ✓ Uploaded! https://youtu.be/" + result.id);
                 auditLog("YOUTUBE_UPLOADED", { video_id: result.id, title: metadata.title });
                 resolve({ status: "success", video_id: result.id, url: "https://youtu.be/" + result.id });
               } else {
@@ -341,14 +359,12 @@ function run(niche, product_url) {
     videoDir = saveVideoPackage(topicData, scriptText, metaData, niche);
     console.log("     ✓ Video package saved: " + path.basename(videoDir));
 
-    // Try to build video if ffmpeg available
     var videoPath = path.join(videoDir, "video.mp4");
     return buildSimpleVideo({ title: topicData.title, script: scriptText }, videoPath);
   }).then(function(videoResult) {
     if (videoResult.status === "built") {
       console.log("     ✓ Video built: " + videoResult.size_mb + "MB");
 
-      // Try to upload if credentials exist
       if (config.youtube.refresh_token) {
         console.log("     → Uploading to YouTube...");
         return uploadVideo(path.join(videoDir, "video.mp4"), {
@@ -359,10 +375,9 @@ function run(niche, product_url) {
         }).then(function(uploadResult) {
           if (uploadResult.status === "success") {
             console.log("     ✓ Live on YouTube: " + uploadResult.url);
-            // Update log
             var logFile = path.join(DATA_DIR, "videos.json");
             var log = JSON.parse(fs.readFileSync(logFile, "utf8"));
-            log[log.length - 1].status = "uploaded";
+            log[log.length - 1].status      = "uploaded";
             log[log.length - 1].youtube_url = uploadResult.url;
             fs.writeFileSync(logFile, JSON.stringify(log, null, 2));
           } else {
