@@ -140,47 +140,38 @@ function buildSimpleVideo(scriptData, outputPath) {
   if (!ffmpegPath) return Promise.resolve({ status: "ffmpeg_unavailable" });
 
   try {
-    var exec  = require("child_process").execSync;
-    var title = scriptData.title || "AI Tools Video";
+    var exec = require("child_process").execSync;
 
-    // Use title split into words as slides since script lines may be too long
-    var words  = title.split(" ");
-    var chunk  = Math.ceil(words.length / 4);
-    var slides = [];
-    for (var i = 0; i < words.length; i += chunk) {
-      slides.push(words.slice(i, i + chunk).join(" "));
-    }
-    // Also add lines from script that are reasonable length
-    var scriptLines = (scriptData.script || "").split("\n")
-      .filter(function(l) { return l.trim().length > 5 && l.trim().length < 80; })
-      .slice(0, 6);
-    slides = slides.concat(scriptLines).slice(0, 8);
-    if (slides.length === 0) slides = [title];
-
+    // Use simple solid color slides — no drawtext, no fonts needed
+    // 8 slides x 8 seconds = 64 second video
+    var colors = ["0d1b2a", "1a2a3a", "0a2a1a", "2a1a0a", "1a0a2a", "0a1a2a", "2a2a0a", "1a1a1a"];
     var tmpDir = path.join(process.cwd(), "tmp", "video");
     fs.mkdirSync(tmpDir, { recursive: true });
 
     var imageFiles = [];
-    for (var j = 0; j < slides.length; j++) {
-      var imgPath = path.join(tmpDir, "slide" + j + ".png");
-      var text    = slides[j].replace(/'/g, "").replace(/"/g, "").replace(/:/g, " ").slice(0, 60);
+    for (var i = 0; i < colors.length; i++) {
+      var imgPath = path.join(tmpDir, "slide" + i + ".png");
       try {
         exec(
-          "\"" + ffmpegPath + "\" -y -f lavfi -i color=c=0d1b2a:size=1280x720:duration=8 " +
-          "-vf \"drawtext=text='" + text + "':fontcolor=white:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10\" " +
-          "-frames:v 1 " + imgPath,
+          "\"" + ffmpegPath + "\" -y -f lavfi -i color=c=" + colors[i] + ":size=1280x720:duration=1 -frames:v 1 " + imgPath,
           { stdio: "pipe" }
         );
         imageFiles.push(imgPath);
-      } catch(e) { console.log("     → Slide " + j + " failed: " + e.message.slice(0, 60)); }
+      } catch(e) {
+        console.log("     → Slide " + i + " error: " + e.message.slice(0, 80));
+      }
     }
 
     if (imageFiles.length === 0) return Promise.resolve({ status: "no_slides" });
 
+    // Build concat list — each slide shown for 8 seconds
     var listFile    = path.join(tmpDir, "slides.txt");
-    var listContent = imageFiles.map(function(f) { return "file '" + f + "'\nduration 8"; }).join("\n");
+    var listContent = imageFiles.map(function(f) {
+      return "file '" + f + "'\nduration 8";
+    }).join("\n");
     fs.writeFileSync(listFile, listContent);
 
+    // Combine into MP4
     exec(
       "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -vf fps=30 -c:v libx264 -pix_fmt yuv420p \"" + outputPath + "\"",
       { stdio: "pipe" }
