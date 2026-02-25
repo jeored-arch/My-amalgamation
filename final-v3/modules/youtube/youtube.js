@@ -268,6 +268,9 @@ function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
   var exec    = require("child_process").execSync;
   var filters = [];
 
+  // Helper: wrap text value in single quotes for ffmpeg filter
+  function ft(str, maxLen) { return "'" + safeText(str, maxLen) + "'"; }
+
   if (slide.type === "title") {
     filters.push("drawbox=x=0:y=0:w=iw:h=10:color=0x4488ff:t=fill");
     filters.push("drawbox=x=0:y=ih-10:w=iw:h=10:color=0x4488ff:t=fill");
@@ -276,13 +279,13 @@ function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
     var startY = Math.max(200, 310 - titleLines.length * 36);
     for (var i = 0; i < Math.min(titleLines.length, 3); i++) {
       filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + safeText(titleLines[i], 55) +
+        "drawtext=fontfile=" + fontFile + ":text=" + ft(titleLines[i], 55) +
         ":fontcolor=white:fontsize=50:x=(w-text_w)/2:y=" + (startY + i * 66)
       );
     }
     if (slide.sub) {
       filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + safeText(slide.sub, 60) +
+        "drawtext=fontfile=" + fontFile + ":text=" + ft(slide.sub, 60) +
         ":fontcolor=0x88aaff:fontsize=26:x=(w-text_w)/2:y=530"
       );
     }
@@ -291,19 +294,19 @@ function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
     filters.push("drawbox=x=0:y=0:w=iw:h=10:color=0xff8844:t=fill");
     filters.push("drawbox=x=0:y=ih-90:w=iw:h=90:color=black@0.6:t=fill");
     filters.push(
-      "drawtext=fontfile=" + fontFile + ":text=" + safeText(slide.headline, 50) +
+      "drawtext=fontfile=" + fontFile + ":text=" + ft(slide.headline, 50) +
       ":fontcolor=0xffaa44:fontsize=46:x=(w-text_w)/2:y=230"
     );
     var body = slide.body || [];
     for (var j = 0; j < Math.min(body.length, 3); j++) {
       filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + safeText(body[j], 60) +
+        "drawtext=fontfile=" + fontFile + ":text=" + ft(body[j], 60) +
         ":fontcolor=white:fontsize=28:x=(w-text_w)/2:y=" + (360 + j * 50)
       );
     }
     if (slide.cta) {
       filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + safeText(slide.cta, 55) +
+        "drawtext=fontfile=" + fontFile + ":text=" + ft(slide.cta, 55) +
         ":fontcolor=0xffaa44:fontsize=28:x=(w-text_w)/2:y=h-65"
       );
     }
@@ -316,7 +319,7 @@ function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
     var headLines = wrapText(slide.headline, 40);
     for (var hi = 0; hi < Math.min(headLines.length, 2); hi++) {
       filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + safeText(headLines[hi], 55) +
+        "drawtext=fontfile=" + fontFile + ":text=" + ft(headLines[hi], 55) +
         ":fontcolor=white:fontsize=42:x=(w-text_w)/2:y=" + (158 + hi * 56)
       );
     }
@@ -326,7 +329,7 @@ function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
       var wrapped = wrapText(bodyLines[bi], 58);
       for (var wi = 0; wi < Math.min(wrapped.length, 2); wi++) {
         filters.push(
-          "drawtext=fontfile=" + fontFile + ":text=" + safeText(wrapped[wi], 65) +
+          "drawtext=fontfile=" + fontFile + ":text=" + ft(wrapped[wi], 65) +
           ":fontcolor=0xccddff:fontsize=28:x=100:y=" + (300 + bi * 88 + wi * 36)
         );
       }
@@ -335,7 +338,7 @@ function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
     // Subtle bottom bar
     filters.push("drawbox=x=0:y=ih-44:w=iw:h=44:color=black@0.5:t=fill");
     filters.push(
-      "drawtext=fontfile=" + fontFile + ":text=Subscribe for weekly tips" +
+      "drawtext=fontfile=" + fontFile + ":text='Subscribe for weekly tips'" +
       ":fontcolor=0x666666:fontsize=18:x=(w-text_w)/2:y=h-30"
     );
   }
