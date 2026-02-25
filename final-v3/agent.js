@@ -14,7 +14,6 @@ const niche     = require("./core/niche");
 const youtube   = require("./modules/youtube/youtube");
 const printify  = require("./modules/printify/printify");
 const gumroad   = require("./modules/gumroad/gumroad-products");
-const video     = require("./modules/video/video-builder");
 const affiliate = require("./modules/affiliate/affiliate");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
@@ -73,15 +72,12 @@ async function main() {
   // ── GUMROAD PRODUCT ───────────────────────────────────────────────────────
   console.log(c("cyan","\n  🛍️  Gumroad product..."));
   try {
-    const productUrl  = process.env.MANUAL_PRODUCT_URL || null;
-    const productName = process.env.MANUAL_PRODUCT_NAME || "Credit Score Kickstart Kit";
+    const productUrl   = process.env.MANUAL_PRODUCT_URL  || null;
+    const productName  = process.env.MANUAL_PRODUCT_NAME || "Credit Score Kickstart Kit";
     const productPrice = parseFloat(process.env.MANUAL_PRODUCT_PRICE || "7");
     const product = { name: productName, price: productPrice, url: productUrl, status: "manual" };
     state.product_url = product.url;
     ok(`Product: "${product.name}" at $${product.price} — live at ${product.url || "no URL set"}`);
-    if (productUrl) {
-      await notify.sendTelegram("Product live: " + productName + "\n$" + productPrice + "\n" + productUrl).catch(()=>{});
-    }
   } catch(e) { wrn(`Gumroad: ${e.message}`); }
 
   // ── REVENUE ───────────────────────────────────────────────────────────────
@@ -95,7 +91,6 @@ async function main() {
   if (totalNew > 0) {
     const { owner_cut, agent_cut, tier } = treasury.processRevenue(totalNew);
     ok(`${newSales.length} sale(s) — gross $${totalNew.toFixed(2)}`);
-    console.log(`     Your ${tier.owner}%: ${c("green","$"+owner_cut.toFixed(2))} → bank  |  Agent ${tier.agent}%: $${agent_cut.toFixed(2)} → ops`);
     await notify.sendTelegram(`💰 ${newSales.length} Sale(s)!\nTotal: $${totalNew.toFixed(2)}\nYour cut: $${owner_cut.toFixed(2)}\nTier: ${tier.label}`);
   } else { inf("No new sales."); }
 
@@ -115,31 +110,24 @@ async function main() {
     }
   }
 
-  // ── YOUTUBE + VIDEO ───────────────────────────────────────────────────────
-  const unlocks = treasury.loadUnlocks();
-  if (unlocks.youtube?.status==="active") {
-    console.log(c("cyan","\n  📹 YouTube pipeline..."));
-    try {
-      const affLinks   = affiliate.formatForYouTube(currentNiche);
-      const scriptData = await youtube.run(currentNiche, state.product_url, affLinks);
-      state.youtube_videos++;
-      ok(`Script: "${scriptData.title}"`);
-      inf("Building video...");
-      const videoResult = await video.buildVideo(scriptData);
-      if (videoResult.status==="built") {
-        state.videos_built++;
-        ok(`Video: ${videoResult.size_mb}MB ready`);
-        if (config.youtube.refresh_token) {
-          try { await youtube.uploadVideo(videoResult.path, scriptData); ok("Uploaded to YouTube"); }
-          catch(e) { wrn(`Upload failed: ${e.message}`); }
-        }
-      } else {
-        inf("Script saved — video needs FFmpeg on Railway");
-      }
-    } catch(e) { wrn(`YouTube: ${e.message}`); }
-  }
+  // ── YOUTUBE ───────────────────────────────────────────────────────────────
+  console.log(c("cyan","\n  📹 YouTube pipeline..."));
+  try {
+    const result = await youtube.run(currentNiche, state.product_url);
+    state.youtube_videos++;
+    ok(`Script: "${result.title}"`);
+    if (result.upload && result.upload.status === "success") {
+      state.videos_built++;
+      ok(`Uploaded to YouTube: ${result.upload.url}`);
+      await notify.sendTelegram(`YouTube video live!\n${result.title}\n${result.upload.url}`);
+    } else if (result.status === "complete") {
+      state.videos_built++;
+      ok(`Video built and processed`);
+    }
+  } catch(e) { wrn(`YouTube: ${e.message}`); }
 
   // ── PRINTIFY ──────────────────────────────────────────────────────────────
+  const unlocks = treasury.loadUnlocks();
   if (unlocks.printify?.status==="active") {
     const day = new Date().getDay();
     if ([1,3,5].includes(day)) {
@@ -190,7 +178,6 @@ async function main() {
   const ytStats  = youtube.getGrowthStatus();
   const podStats = printify.getStats();
   const gmStats  = gumroad.getStats();
-  const vidStats = video.getStats();
   const affStats = affiliate.getSummary();
 
   await notify.sendDailyReport({
@@ -206,7 +193,7 @@ async function main() {
       `Niche: "${currentNiche}" (day ${nicheStatus?.days_active||0})`,
       `Product: "Credit Score Kickstart Kit" at $7 — ${state.product_url || "no URL"}`,
       `Affiliates: ${affStats.active_programs} programs active — ${affStats.estimated_monthly}`,
-      `YouTube: ${ytStats.videos_created} scripts | ${vidStats.videos_built} videos built`,
+      `YouTube: ${ytStats.videos_created} scripts | ${state.videos_built} videos built`,
       `Etsy: ${podStats.products_created} products`,
       `Emails sent: ${state.emails_total}`,
       `Your total earned: $${(fin.owner_total_earned||0).toFixed(2)} (${fin.tier?.owner||60}% split)`,
@@ -220,7 +207,7 @@ async function main() {
   });
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow\n`));
-  console.log(`  Niche:      ${c("cyan",currentNiche)}\n  Product:    ${c("green","Credit Score Kickstart Kit")} @ $7\n  URL:        ${state.product_url||"not set"}\n  Earned:     ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n  Affiliates: ${affStats.active_programs} active\n  Videos:     ${vidStats.videos_built} built\n`);
+  console.log(`  Niche:      ${c("cyan",currentNiche)}\n  Product:    ${c("green","Credit Score Kickstart Kit")} @ $7\n  URL:        ${state.product_url||"not set"}\n  Earned:     ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n  Affiliates: ${affStats.active_programs} active\n  Videos:     ${state.videos_built} built\n`);
 }
 
 main().catch(async err => {
