@@ -1,7 +1,8 @@
 require("dotenv").config();
-const https  = require("https");
-const fs     = require("fs");
-const path   = require("path");
+const https    = require("https");
+const http     = require("http");
+const fs       = require("fs");
+const path     = require("path");
 const Anthropic = require("@anthropic-ai/sdk");
 
 const config  = require("../../config");
@@ -11,17 +12,49 @@ const client   = new Anthropic({ apiKey: config.anthropic.api_key });
 const OUT_DIR  = path.join(process.cwd(), "output", "youtube");
 const DATA_DIR = path.join(process.cwd(), "data", "youtube");
 
+// ── FIND FFMPEG ───────────────────────────────────────────────────────────────
+
 function findFfmpeg() {
   try {
     var p = require("ffmpeg-static");
-    if (p) { console.log("     → ffmpeg-static found: " + p); return p; }
+    if (p) { console.log("     → ffmpeg found"); return p; }
   } catch(e) {}
   try {
-    var which = require("child_process").execSync("which ffmpeg", { encoding: "utf8" }).trim();
-    if (which) { console.log("     → system ffmpeg found: " + which); return which; }
+    var w = require("child_process").execSync("which ffmpeg", { encoding: "utf8" }).trim();
+    if (w) return w;
   } catch(e) {}
   return null;
 }
+
+// ── DOWNLOAD FILE (with redirect support) ────────────────────────────────────
+
+function downloadFile(url, destPath, redirectCount) {
+  redirectCount = redirectCount || 0;
+  if (redirectCount > 5) return Promise.reject(new Error("Too many redirects"));
+  return new Promise(function(resolve, reject) {
+    var proto = url.startsWith("https") ? https : http;
+    var file  = fs.createWriteStream(destPath);
+    proto.get(url, function(res) {
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+        file.close();
+        fs.unlink(destPath, function() {});
+        return downloadFile(res.headers.location, destPath, redirectCount + 1).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) {
+        file.close();
+        return reject(new Error("HTTP " + res.statusCode));
+      }
+      res.pipe(file);
+      file.on("finish", function() { file.close(); resolve(destPath); });
+      file.on("error", reject);
+    }).on("error", function(e) {
+      fs.unlink(destPath, function() {});
+      reject(e);
+    });
+  });
+}
+
+// ── GET FRESH ACCESS TOKEN ────────────────────────────────────────────────────
 
 function getAccessToken() {
   var clientId     = config.youtube.client_id;
@@ -35,21 +68,18 @@ function getAccessToken() {
     "&refresh_token=" + encodeURIComponent(refreshToken) +
     "&grant_type=refresh_token";
   return new Promise(function(resolve, reject) {
-    var options = {
-      hostname: "oauth2.googleapis.com",
-      path:     "/token",
-      method:   "POST",
+    var req = https.request({
+      hostname: "oauth2.googleapis.com", path: "/token", method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "Content-Length": Buffer.byteLength(body) },
-    };
-    var req = https.request(options, function(res) {
+    }, function(res) {
       var data = "";
       res.on("data", function(d) { data += d; });
       res.on("end", function() {
         try {
           var r = JSON.parse(data);
-          if (r.access_token) { console.log("     → YouTube access token obtained"); resolve(r.access_token); }
-          else { reject(new Error("Token error: " + JSON.stringify(r))); }
-        } catch(e) { reject(new Error("Token parse error: " + data.slice(0, 100))); }
+          if (r.access_token) { console.log("     → Access token obtained"); resolve(r.access_token); }
+          else reject(new Error("Token error: " + JSON.stringify(r)));
+        } catch(e) { reject(new Error("Token parse error")); }
       });
     });
     req.on("error", reject);
@@ -57,6 +87,255 @@ function getAccessToken() {
     req.end();
   });
 }
+
+// ── PEXELS VIDEO SEARCH ───────────────────────────────────────────────────────
+
+function searchPexelsVideos(query) {
+  var apiKey = (config.pexels && config.pexels.api_key) || process.env.PEXELS_API_KEY;
+  if (!apiKey) return Promise.resolve([]);
+  var searchQuery = encodeURIComponent(query.slice(0, 40));
+  return new Promise(function(resolve) {
+    https.get({
+      hostname: "api.pexels.com",
+      path:     "/videos/search?query=" + searchQuery + "&orientation=landscape&size=medium&per_page=6",
+      headers:  { "Authorization": apiKey },
+    }, function(res) {
+      var data = "";
+      res.on("data", function(d) { data += d; });
+      res.on("end", function() {
+        try {
+          var r = JSON.parse(data);
+          var videos = (r.videos || []).filter(function(v) {
+            return v.duration >= 4 && v.duration <= 30;
+          });
+          resolve(videos);
+        } catch(e) { resolve([]); }
+      });
+    }).on("error", function() { resolve([]); });
+  });
+}
+
+function getBestVideoUrl(video) {
+  var files = (video.video_files || []).filter(function(f) { return f.file_type === "video/mp4"; });
+  var hd    = files.filter(function(f) { return f.width >= 1280 && f.quality === "hd"; });
+  if (hd.length > 0) return hd[0].link;
+  var sd = files.filter(function(f) { return f.width >= 640; });
+  if (sd.length > 0) return sd[0].link;
+  if (files.length > 0) return files[0].link;
+  return null;
+}
+
+// ── DOWNLOAD ROYALTY-FREE MUSIC ───────────────────────────────────────────────
+// Uses a public domain / CC0 music track from the web
+
+function downloadMusic(tmpDir) {
+  // Free motivational background music (CC0 / public domain)
+  var musicUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+  var musicPath = path.join(tmpDir, "background.mp3");
+  if (fs.existsSync(musicPath)) return Promise.resolve(musicPath);
+  console.log("     → Downloading background music...");
+  return downloadFile(musicUrl, musicPath).then(function() {
+    return musicPath;
+  }).catch(function() {
+    return null; // music is optional — video works without it
+  });
+}
+
+// ── BUILD VIDEO WITH PEXELS + TEXT + MUSIC ───────────────────────────────────
+
+function buildPexelsVideo(niche, title, outputPath) {
+  var ffmpegPath = findFfmpeg();
+  if (!ffmpegPath) return Promise.resolve({ status: "ffmpeg_unavailable" });
+
+  var tmpDir = path.join(process.cwd(), "tmp", "video");
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  // Generate search terms from niche
+  var words      = niche.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(" ");
+  var searchTerm = words.slice(0, 3).join(" ");
+  var fallbacks  = ["business technology", "people working", "office success"];
+
+  console.log("     → Searching Pexels: \"" + searchTerm + "\"");
+
+  var musicPath = null;
+
+  return downloadMusic(tmpDir).then(function(mp3) {
+    musicPath = mp3;
+    return searchPexelsVideos(searchTerm);
+  }).then(function(videos) {
+    if (videos.length === 0) return searchPexelsVideos(fallbacks[0]);
+    return videos;
+  }).then(function(videos) {
+    if (videos.length === 0) return searchPexelsVideos(fallbacks[1]);
+    return videos;
+  }).then(function(videos) {
+    if (videos.length === 0) {
+      console.log("     → No Pexels videos, using color slides");
+      return buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath);
+    }
+
+    console.log("     → Downloading " + Math.min(videos.length, 4) + " clips...");
+    var clips    = videos.slice(0, 4);
+    var promises = clips.map(function(video, i) {
+      var url      = getBestVideoUrl(video);
+      var clipPath = path.join(tmpDir, "clip" + i + ".mp4");
+      if (!url) return Promise.resolve(null);
+      return downloadFile(url, clipPath)
+        .then(function() { return clipPath; })
+        .catch(function() { return null; });
+    });
+
+    return Promise.all(promises).then(function(clipPaths) {
+      var valid = clipPaths.filter(function(p) { return p && fs.existsSync(p); });
+      if (valid.length === 0) {
+        console.log("     → Clip downloads failed, using color slides");
+        return buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath);
+      }
+
+      console.log("     → Building video with " + valid.length + " clips...");
+      return combineClipsWithTextAndMusic(ffmpegPath, valid, title, outputPath, musicPath);
+    });
+  }).catch(function(e) {
+    console.log("     → Build error: " + e.message.slice(0, 100));
+    return buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath);
+  });
+}
+
+// ── COMBINE CLIPS + TEXT OVERLAY + MUSIC ─────────────────────────────────────
+
+function combineClipsWithTextAndMusic(ffmpegPath, clipPaths, title, outputPath, musicPath) {
+  try {
+    var exec = require("child_process").execSync;
+
+    // Step 1: Normalize each clip to 1280x720 mp4
+    var normalizedPaths = [];
+    for (var i = 0; i < clipPaths.length; i++) {
+      var normPath = clipPaths[i].replace(".mp4", "_norm.mp4");
+      try {
+        exec(
+          "\"" + ffmpegPath + "\" -y -i \"" + clipPaths[i] + "\" " +
+          "-vf \"scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1\" " +
+          "-c:v libx264 -pix_fmt yuv420p -r 30 -an -t 10 \"" + normPath + "\"",
+          { stdio: "pipe", timeout: 60000 }
+        );
+        if (fs.existsSync(normPath)) normalizedPaths.push(normPath);
+      } catch(e) { /* skip this clip */ }
+    }
+
+    if (normalizedPaths.length === 0) {
+      return Promise.resolve({ status: "normalize_failed" });
+    }
+
+    // Step 2: Concat normalized clips
+    var tmpDir   = path.dirname(clipPaths[0]);
+    var listFile = path.join(tmpDir, "concat.txt");
+    fs.writeFileSync(listFile, normalizedPaths.map(function(f) { return "file '" + f + "'"; }).join("\n"));
+
+    var concatPath = path.join(tmpDir, "concat.mp4");
+    exec(
+      "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -c copy \"" + concatPath + "\"",
+      { stdio: "pipe", timeout: 60000 }
+    );
+
+    // Step 3: Add text overlay (title at bottom, semi-transparent bar)
+    var safeTitle  = title.replace(/'/g, "").replace(/"/g, "").replace(/:/g, " ").slice(0, 55);
+    var withTextPath = path.join(tmpDir, "with_text.mp4");
+
+    // Check if drawtext works on this ffmpeg build
+    var drawtextWorks = false;
+    try {
+      exec("\"" + ffmpegPath + "\" -y -f lavfi -i color=black:size=100x100:duration=1 -vf drawtext=text='test':fontsize=12 -frames:v 1 " + path.join(tmpDir, "test.png"), { stdio: "pipe" });
+      drawtextWorks = true;
+    } catch(e) { /* drawtext not available */ }
+
+    if (drawtextWorks) {
+      try {
+        exec(
+          "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" " +
+          "-vf \"drawbox=y=ih-80:color=black@0.6:width=iw:height=80:t=fill," +
+          "drawtext=text='" + safeTitle + "':fontcolor=white:fontsize=28:x=(w-text_w)/2:y=h-60\" " +
+          "-c:v libx264 -pix_fmt yuv420p -an \"" + withTextPath + "\"",
+          { stdio: "pipe", timeout: 60000 }
+        );
+      } catch(e) {
+        withTextPath = concatPath; // fall back to no text
+      }
+    } else {
+      withTextPath = concatPath;
+    }
+
+    // Step 4: Add music if available
+    var finalPath = outputPath;
+    if (musicPath && fs.existsSync(musicPath)) {
+      try {
+        exec(
+          "\"" + ffmpegPath + "\" -y -i \"" + withTextPath + "\" -i \"" + musicPath + "\" " +
+          "-filter_complex \"[1:a]volume=0.15,aloop=loop=-1:size=2e+09[music];[music]atrim=0=" + (normalizedPaths.length * 10) + "[trimmed]\" " +
+          "-map 0:v -map \"[trimmed]\" -c:v copy -c:a aac -shortest \"" + finalPath + "\"",
+          { stdio: "pipe", timeout: 120000 }
+        );
+        console.log("     → Music added to video");
+      } catch(e) {
+        // Music failed — just copy video without audio
+        exec("\"" + ffmpegPath + "\" -y -i \"" + withTextPath + "\" -c copy \"" + finalPath + "\"", { stdio: "pipe" });
+      }
+    } else {
+      exec("\"" + ffmpegPath + "\" -y -i \"" + withTextPath + "\" -c copy \"" + finalPath + "\"", { stdio: "pipe" });
+    }
+
+    if (!fs.existsSync(finalPath)) return Promise.resolve({ status: "output_missing" });
+    var stats = fs.statSync(finalPath);
+    return Promise.resolve({ status: "built", path: finalPath, size_mb: (stats.size / 1024 / 1024).toFixed(1), source: "pexels" });
+
+  } catch(e) {
+    console.log("     → Combine error: " + e.message.slice(0, 150));
+    return Promise.resolve({ status: "build_error", message: e.message.slice(0, 100) });
+  }
+}
+
+// ── FALLBACK: COLOR SLIDES WITH TEXT ─────────────────────────────────────────
+
+function buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath) {
+  try {
+    var exec   = require("child_process").execSync;
+    var colors = ["0d1b2a", "1a2a3a", "0a2a1a", "2a1a0a", "1a0a2a", "0a1a2a"];
+    var images = [];
+    for (var i = 0; i < colors.length; i++) {
+      var imgPath = path.join(tmpDir, "cslide" + i + ".png");
+      try {
+        exec("\"" + ffmpegPath + "\" -y -f lavfi -i color=c=" + colors[i] + ":size=1280x720:duration=1 -frames:v 1 " + imgPath, { stdio: "pipe" });
+        images.push(imgPath);
+      } catch(e) {}
+    }
+    if (images.length === 0) return Promise.resolve({ status: "no_slides" });
+    var listFile = path.join(tmpDir, "cslides.txt");
+    fs.writeFileSync(listFile, images.map(function(f) { return "file '" + f + "'\nduration 8"; }).join("\n"));
+    var concatPath = path.join(tmpDir, "cconcat.mp4");
+    exec("\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -vf fps=30 -c:v libx264 -pix_fmt yuv420p -an \"" + concatPath + "\"", { stdio: "pipe" });
+
+    // Add music if available
+    if (musicPath && fs.existsSync(musicPath)) {
+      try {
+        exec(
+          "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + musicPath + "\" " +
+          "-filter_complex \"[1:a]volume=0.15[music]\" -map 0:v -map \"[music]\" -c:v copy -c:a aac -shortest \"" + outputPath + "\"",
+          { stdio: "pipe" }
+        );
+      } catch(e) {
+        exec("\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" });
+      }
+    } else {
+      exec("\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" });
+    }
+
+    var stats = fs.statSync(outputPath);
+    return Promise.resolve({ status: "built", path: outputPath, size_mb: (stats.size / 1024 / 1024).toFixed(1), source: "color_slides" });
+  } catch(e) {
+    return Promise.resolve({ status: "build_error", message: e.message.slice(0, 100) });
+  }
+}
+
+// ── TOPIC RESEARCH ────────────────────────────────────────────────────────────
 
 function researchTopics(niche) {
   return client.messages.create({
@@ -118,7 +397,7 @@ function generateMetadata(topic, niche) {
   });
 }
 
-function saveVideoPackage(topic, script, metadata, niche) {
+function saveVideoPackage(topic, script, metadata) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.mkdirSync(DATA_DIR, { recursive: true });
   var slug     = topic.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50);
@@ -135,60 +414,9 @@ function saveVideoPackage(topic, script, metadata, niche) {
   return videoDir;
 }
 
-function buildSimpleVideo(scriptData, outputPath) {
-  var ffmpegPath = findFfmpeg();
-  if (!ffmpegPath) return Promise.resolve({ status: "ffmpeg_unavailable" });
-
-  try {
-    var exec = require("child_process").execSync;
-
-    // Use simple solid color slides — no drawtext, no fonts needed
-    // 8 slides x 8 seconds = 64 second video
-    var colors = ["0d1b2a", "1a2a3a", "0a2a1a", "2a1a0a", "1a0a2a", "0a1a2a", "2a2a0a", "1a1a1a"];
-    var tmpDir = path.join(process.cwd(), "tmp", "video");
-    fs.mkdirSync(tmpDir, { recursive: true });
-
-    var imageFiles = [];
-    for (var i = 0; i < colors.length; i++) {
-      var imgPath = path.join(tmpDir, "slide" + i + ".png");
-      try {
-        exec(
-          "\"" + ffmpegPath + "\" -y -f lavfi -i color=c=" + colors[i] + ":size=1280x720:duration=1 -frames:v 1 " + imgPath,
-          { stdio: "pipe" }
-        );
-        imageFiles.push(imgPath);
-      } catch(e) {
-        console.log("     → Slide " + i + " error: " + e.message.slice(0, 80));
-      }
-    }
-
-    if (imageFiles.length === 0) return Promise.resolve({ status: "no_slides" });
-
-    // Build concat list — each slide shown for 8 seconds
-    var listFile    = path.join(tmpDir, "slides.txt");
-    var listContent = imageFiles.map(function(f) {
-      return "file '" + f + "'\nduration 8";
-    }).join("\n");
-    fs.writeFileSync(listFile, listContent);
-
-    // Combine into MP4
-    exec(
-      "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -vf fps=30 -c:v libx264 -pix_fmt yuv420p \"" + outputPath + "\"",
-      { stdio: "pipe" }
-    );
-
-    var stats = fs.statSync(outputPath);
-    return Promise.resolve({ status: "built", path: outputPath, size_mb: (stats.size / 1024 / 1024).toFixed(1) });
-  } catch(e) {
-    console.log("     → Video build error: " + e.message.slice(0, 150));
-    return Promise.resolve({ status: "build_error", message: e.message.slice(0, 150) });
-  }
-}
-
 function uploadVideo(videoFilePath, scriptData) {
   if (!config.youtube.refresh_token) return Promise.resolve({ status: "no_credentials" });
   if (!fs.existsSync(videoFilePath))  return Promise.resolve({ status: "no_video_file" });
-
   return getAccessToken().then(function(accessToken) {
     var metadata = {
       title:       (scriptData.title || "AI Tools Video").slice(0, 100),
@@ -202,7 +430,7 @@ function uploadVideo(videoFilePath, scriptData) {
     });
     var fileSize = fs.statSync(videoFilePath).size;
     return new Promise(function(resolve) {
-      var initOptions = {
+      var initReq = https.request({
         hostname: "www.googleapis.com",
         path:     "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
         method:   "POST",
@@ -211,18 +439,16 @@ function uploadVideo(videoFilePath, scriptData) {
           "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": fileSize,
           "Content-Length": Buffer.byteLength(initBody),
         },
-      };
-      var initReq = https.request(initOptions, function(res) {
+      }, function(res) {
         var uploadUrl = res.headers.location;
-        if (!uploadUrl) { console.log("     → No upload URL from YouTube"); return resolve({ status: "error", message: "No upload URL" }); }
-        console.log("     → Upload URL obtained, uploading video...");
+        if (!uploadUrl) { console.log("     → No upload URL"); return resolve({ status: "error", message: "No upload URL" }); }
+        console.log("     → Uploading to YouTube...");
         var videoData = fs.readFileSync(videoFilePath);
         var urlObj    = new URL(uploadUrl);
-        var upOptions = {
+        var upReq = https.request({
           hostname: urlObj.hostname, path: urlObj.pathname + urlObj.search, method: "PUT",
           headers: { "Content-Type": "video/mp4", "Content-Length": fileSize },
-        };
-        var upReq = https.request(upOptions, function(upRes) {
+        }, function(upRes) {
           var body = "";
           upRes.on("data", function(d) { body += d; });
           upRes.on("end", function() {
@@ -248,7 +474,7 @@ function uploadVideo(videoFilePath, scriptData) {
       initReq.end();
     });
   }).catch(function(err) {
-    console.log("     → YouTube upload failed: " + err.message);
+    console.log("     → Upload failed: " + err.message);
     return { status: "error", message: err.message };
   });
 }
@@ -281,15 +507,14 @@ function run(niche, product_url) {
     return generateMetadata(topicData, niche);
   }).then(function(metadata) {
     metaData = metadata;
-    videoDir = saveVideoPackage(topicData, scriptText, metaData, niche);
+    videoDir = saveVideoPackage(topicData, scriptText, metaData);
     console.log("     ✓ Video package saved: " + path.basename(videoDir));
     var videoPath = path.join(videoDir, "video.mp4");
-    return buildSimpleVideo({ title: topicData.title, script: scriptText }, videoPath);
+    return buildPexelsVideo(niche, metaData.title || topicData.title, videoPath);
   }).then(function(videoResult) {
     if (videoResult.status === "built") {
-      console.log("     ✓ Video built: " + videoResult.size_mb + "MB");
+      console.log("     ✓ Video built: " + videoResult.size_mb + "MB (" + (videoResult.source || "pexels") + ")");
       if (config.youtube.refresh_token) {
-        console.log("     → Uploading to YouTube...");
         return uploadVideo(path.join(videoDir, "video.mp4"), {
           title: metaData.title || topicData.title, description: metaData.description || "",
           tags: metaData.tags || [], product_url: product_url,
@@ -308,7 +533,7 @@ function run(niche, product_url) {
         });
       }
     } else {
-      console.log("     → Video build status: " + videoResult.status + " (script saved)");
+      console.log("     → Video status: " + videoResult.status);
     }
     return { status: "ready", title: topicData.title, dir: videoDir };
   });
