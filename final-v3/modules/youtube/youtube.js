@@ -1,46 +1,19 @@
 require("dotenv").config();
-const https = require("https");
-const http  = require("http");
-const fs    = require("fs");
-const path  = require("path");
+const https    = require("https");
+const http     = require("http");
+const fs       = require("fs");
+const path     = require("path");
 const Anthropic = require("@anthropic-ai/sdk");
 
-const config = require("../../config");
+const config   = require("../../config");
 const { auditLog } = require("../../security/vault");
 
 const client   = new Anthropic({ apiKey: config.anthropic.api_key });
 const OUT_DIR  = path.join(process.cwd(), "output", "youtube");
 const DATA_DIR = path.join(process.cwd(), "data", "youtube");
 
-// ── FIND FONT ─────────────────────────────────────────────────────────────────
-
-function findFont() {
-  var candidates = [
-    path.join(process.cwd(), "assets", "DejaVuSans-Bold.ttf"),
-    path.join(process.cwd(), "assets", "font.ttf"),
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-  ];
-  for (var i = 0; i < candidates.length; i++) {
-    if (fs.existsSync(candidates[i])) {
-      console.log("     → Font: " + path.basename(candidates[i]));
-      return candidates[i];
-    }
-  }
-  try {
-    var found = require("child_process").execSync(
-      "find /usr/share/fonts -name '*.ttf' 2>/dev/null | head -1",
-      { encoding: "utf8" }
-    ).trim();
-    if (found) { console.log("     → Font (fallback): " + found); return found; }
-  } catch(e) {}
-  return null;
-}
-
 // ── FIND FFMPEG ───────────────────────────────────────────────────────────────
+// Only used for PNG→video and audio mixing — no drawtext needed
 
 function findFfmpeg() {
   try {
@@ -54,32 +27,22 @@ function findFfmpeg() {
   return null;
 }
 
-// ── SAFE TEXT FOR FFMPEG DRAWTEXT ─────────────────────────────────────────────
-// Removes/replaces ALL characters that can break ffmpeg filter strings
-// Tested against: $100K, #1:, it's, [brackets], commas, equals, quotes
+// ── SAFE TEXT FOR SVG ─────────────────────────────────────────────────────────
 
-function safeText(str, maxLen) {
-  maxLen = maxLen || 60;
-  return String(str || "")
-    .replace(/\\/g, "")           // backslashes
-    .replace(/'/g, "")            // single quotes - breaks filter string
-    .replace(/"/g, "")            // double quotes
-    .replace(/\$/g, "USD")        // dollar signs -> USD (financial content)
-    .replace(/:/g, " -")          // colons -> dash
-    .replace(/,/g, " ")           // commas
-    .replace(/=/g, " ")           // equals
-    .replace(/\[/g, "(")          // square brackets
-    .replace(/\]/g, ")")
-    .replace(/[<>|&;`!#@*^~]/g, "") // other shell-dangerous chars
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxLen);
+function safeXml(s, maxLen) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .slice(0, maxLen || 80);
 }
 
-// ── WRAP TEXT TO MULTIPLE LINES ───────────────────────────────────────────────
+// ── WORD WRAP ─────────────────────────────────────────────────────────────────
 
-function wrapText(text, maxChars) {
-  text = safeText(text, 200);
+function wrapWords(text, maxChars) {
+  text = String(text || "").trim();
   if (text.length <= maxChars) return [text];
   var words = text.split(" ");
   var lines = [];
@@ -97,106 +60,108 @@ function wrapText(text, maxChars) {
   return lines;
 }
 
-// ── DOWNLOAD FILE ─────────────────────────────────────────────────────────────
+// ── BG COLOR MAP ─────────────────────────────────────────────────────────────
 
-function downloadFile(url, destPath, hops) {
-  hops = hops || 0;
-  if (hops > 5) return Promise.reject(new Error("Too many redirects"));
-  return new Promise(function(resolve, reject) {
-    var proto = url.startsWith("https") ? https : http;
-    var file  = fs.createWriteStream(destPath);
-    proto.get(url, function(res) {
-      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
-        file.close();
-        fs.unlink(destPath, function() {});
-        return downloadFile(res.headers.location, destPath, hops + 1).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        file.close();
-        fs.unlink(destPath, function() {});
-        return reject(new Error("HTTP " + res.statusCode));
-      }
-      res.pipe(file);
-      file.on("finish", function() { file.close(); resolve(destPath); });
-      file.on("error", function(e) { fs.unlink(destPath, function() {}); reject(e); });
-    }).on("error", function(e) { fs.unlink(destPath, function() {}); reject(e); });
-  });
-}
+var BG_COLORS = {
+  "0d1b2a": { r: 13,  g: 27,  b: 42  },
+  "0a1a2e": { r: 10,  g: 26,  b: 46  },
+  "12082a": { r: 18,  g: 8,   b: 42  },
+  "0a2018": { r: 10,  g: 32,  b: 24  },
+  "1a1208": { r: 26,  g: 18,  b: 8   },
+  "081a1a": { r: 8,   g: 26,  b: 26  },
+  "1a0818": { r: 26,  g: 8,   b: 24  },
+};
 
-// ── ELEVENLABS VOICEOVER ──────────────────────────────────────────────────────
+// ── BUILD SLIDE PNG WITH SHARP + SVG ─────────────────────────────────────────
 
-function generateVoiceover(text, outputPath) {
-  var apiKey  = (config.elevenlabs && config.elevenlabs.api_key) || process.env.ELEVENLABS_API_KEY;
-  var voiceId = (config.elevenlabs && config.elevenlabs.voice_id) || "21m00Tcm4TlvDq8ikWAM";
-  if (!apiKey) return Promise.resolve(null);
+function makeSlidePng(slide, bgHex, outputPath) {
+  var sharp;
+  try { sharp = require("sharp"); } catch(e) { return Promise.reject(new Error("sharp not available")); }
 
-  var trimmed = text.slice(0, 2500);
-  var body    = JSON.stringify({
-    text: trimmed,
-    model_id: "eleven_monolingual_v1",
-    voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-  });
+  var W   = 1280;
+  var H   = 720;
+  var bg  = BG_COLORS[bgHex] || { r: 13, g: 27, b: 42 };
+  var svg;
 
-  return new Promise(function(resolve) {
-    var req = https.request({
-      hostname: "api.elevenlabs.io",
-      path:     "/v1/text-to-speech/" + voiceId,
-      method:   "POST",
-      headers: {
-        "xi-api-key":     apiKey,
-        "Content-Type":   "application/json",
-        "Accept":         "audio/mpeg",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    }, function(res) {
-      if (res.statusCode !== 200) {
-        console.log("     → ElevenLabs: HTTP " + res.statusCode + " (skipping voiceover)");
-        res.resume();
-        return resolve(null);
-      }
-      var file = fs.createWriteStream(outputPath);
-      res.pipe(file);
-      file.on("finish", function() {
-        file.close();
-        console.log("     ✓ Voiceover generated");
-        resolve(outputPath);
-      });
-      file.on("error", function() { resolve(null); });
-    });
-    req.on("error", function(e) {
-      console.log("     → ElevenLabs error: " + e.message);
-      resolve(null);
-    });
-    req.write(body);
-    req.end();
-  });
-}
-
-// ── GENERATE AMBIENT MUSIC ────────────────────────────────────────────────────
-
-function generateMusic(ffmpegPath, durationSecs, outputPath) {
-  if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
-    return outputPath;
-  }
-  try {
-    var exec = require("child_process").execSync;
-    // Four quiet sine waves layered = soft ambient chord (no external downloads)
-    var cmd = "\"" + ffmpegPath + "\" -y " +
-      "-f lavfi -i sine=frequency=130:duration=" + (durationSecs + 5) + " " +
-      "-f lavfi -i sine=frequency=196:duration=" + (durationSecs + 5) + " " +
-      "-f lavfi -i sine=frequency=261:duration=" + (durationSecs + 5) + " " +
-      "-f lavfi -i sine=frequency=392:duration=" + (durationSecs + 5) + " " +
-      "-filter_complex \"[0][1][2][3]amix=inputs=4:duration=longest,volume=0.07\" " +
-      "-c:a aac \"" + outputPath + "\"";
-    exec(cmd, { stdio: "pipe", timeout: 30000 });
-    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
-      console.log("     ✓ Ambient music generated");
-      return outputPath;
+  if (slide.type === "title") {
+    var lines   = wrapWords(slide.headline, 30);
+    var startY  = Math.max(200, 320 - lines.length * 40);
+    var textEls = "";
+    for (var i = 0; i < Math.min(lines.length, 3); i++) {
+      textEls += '<text x="640" y="' + (startY + i * 74) + '" ' +
+        'font-family="Arial,Helvetica,sans-serif" font-size="54" font-weight="bold" ' +
+        'fill="white" text-anchor="middle">' + safeXml(lines[i], 38) + '</text>';
     }
-  } catch(e) {
-    console.log("     → Music error: " + e.message.slice(0, 80));
+    svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect width="' + W + '" height="' + H + '" fill="#' + bgHex + '"/>' +
+      '<rect width="' + W + '" height="10" fill="#4488ff"/>' +
+      '<rect y="' + (H - 10) + '" width="' + W + '" height="10" fill="#4488ff" opacity="0.5"/>' +
+      textEls +
+      '<text x="640" y="570" font-family="Arial,Helvetica,sans-serif" font-size="26" fill="#88aaff" text-anchor="middle">' +
+        safeXml(slide.sub || "Watch to the end for the full breakdown", 65) +
+      '</text>' +
+      '</svg>';
+
+  } else if (slide.type === "cta") {
+    var ctaBody = (slide.body || []).slice(0, 2);
+    var ctaEls  = "";
+    for (var j = 0; j < ctaBody.length; j++) {
+      ctaEls += '<text x="640" y="' + (385 + j * 56) + '" ' +
+        'font-family="Arial,Helvetica,sans-serif" font-size="28" fill="white" text-anchor="middle">' +
+        safeXml(ctaBody[j], 65) + '</text>';
+    }
+    svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect width="' + W + '" height="' + H + '" fill="#' + bgHex + '"/>' +
+      '<rect width="' + W + '" height="10" fill="#ff8844"/>' +
+      '<rect y="' + (H - 90) + '" width="' + W + '" height="90" fill="#000000" opacity="0.65"/>' +
+      '<text x="640" y="275" font-family="Arial,Helvetica,sans-serif" font-size="50" font-weight="bold" fill="#ffaa44" text-anchor="middle">' +
+        safeXml(slide.headline, 44) +
+      '</text>' +
+      ctaEls +
+      '<text x="640" y="' + (H - 38) + '" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="#ffaa44" text-anchor="middle">' +
+        safeXml(slide.cta || "Hit Subscribe now", 55) +
+      '</text>' +
+      '</svg>';
+
+  } else {
+    // Section slide
+    var headLines = wrapWords(slide.headline, 44);
+    var headEls   = "";
+    for (var hi = 0; hi < Math.min(headLines.length, 2); hi++) {
+      headEls += '<text x="640" y="' + (215 + hi * 56) + '" ' +
+        'font-family="Arial,Helvetica,sans-serif" font-size="44" font-weight="bold" ' +
+        'fill="white" text-anchor="middle">' + safeXml(headLines[hi], 52) + '</text>';
+    }
+    var body    = slide.body || [];
+    var bodyEls = "";
+    var yPos    = 310;
+    for (var bi = 0; bi < Math.min(body.length, 4); bi++) {
+      var wrapped = wrapWords(body[bi], 62);
+      for (var wi = 0; wi < Math.min(wrapped.length, 2); wi++) {
+        bodyEls += '<text x="100" y="' + yPos + '" ' +
+          'font-family="Arial,Helvetica,sans-serif" font-size="28" fill="#ccddff">' +
+          safeXml(wrapped[wi], 68) + '</text>';
+        yPos += 36;
+      }
+      yPos += 20; // gap between body items
+    }
+    svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect width="' + W + '" height="' + H + '" fill="#' + bgHex + '"/>' +
+      '<rect width="' + W + '" height="10" fill="#4488ff"/>' +
+      '<rect x="60" y="148" width="' + (W - 120) + '" height="' + (headLines.length > 1 ? 120 : 72) + '" fill="#000000" opacity="0.4" rx="6"/>' +
+      '<rect y="' + (H - 46) + '" width="' + W + '" height="46" fill="#000000" opacity="0.5"/>' +
+      headEls +
+      bodyEls +
+      '<text x="640" y="' + (H - 16) + '" font-family="Arial,Helvetica,sans-serif" font-size="17" fill="#555555" text-anchor="middle">Subscribe for weekly tips</text>' +
+      '</svg>';
   }
-  return null;
+
+  return sharp({
+    create: { width: W, height: H, channels: 3, background: bg }
+  })
+  .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+  .png()
+  .toFile(outputPath);
 }
 
 // ── SCRIPT → SLIDES ───────────────────────────────────────────────────────────
@@ -204,7 +169,6 @@ function generateMusic(ffmpegPath, durationSecs, outputPath) {
 function scriptToSlides(title, scriptText) {
   var slides = [];
 
-  // Slide 0: title card
   slides.push({ type: "title", headline: title, sub: "Watch to the end for the full breakdown" });
 
   var lines = scriptText.split("\n")
@@ -227,10 +191,10 @@ function scriptToSlides(title, scriptText) {
   }
 
   for (var i = 0; i < lines.length; i++) {
-    var raw      = lines[i];
-    var clean    = raw.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim();
+    var raw   = lines[i];
+    var clean = raw.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim();
     var isHeader = raw.startsWith("#") ||
-      (clean.length < 60 && /^(step|tip|point|section|part|intro|conclusion|outro|hook|key|number|\d+[\.\)])/i.test(clean));
+      /^(step|tip|point|section|part|intro|conclusion|outro|hook|number|\d+[\.\)])/i.test(clean);
 
     if (isHeader && slides.length > 0) {
       flush();
@@ -242,13 +206,12 @@ function scriptToSlides(title, scriptText) {
   }
   flush();
 
-  // Pad to 28 slides
   var fillers = [
-    { headline: "Key Takeaway",    body: ["Apply one strategy from this video today", "Small consistent steps beat big sporadic ones"] },
-    { headline: "Pro Tip",         body: ["Start with free tools before upgrading", "Track your progress every single week"] },
-    { headline: "Common Mistake",  body: ["Most people skip this critical step", "Do not make the same mistake they do"] },
-    { headline: "Action Step",     body: ["Pick ONE thing from this video", "Implement it before the week is over"] },
-    { headline: "Did You Know",    body: ["The top performers all do this daily", "You now have the same knowledge they do"] },
+    { headline: "Key Takeaway",   body: ["Apply one strategy from this video today", "Small consistent steps beat big sporadic ones"] },
+    { headline: "Pro Tip",        body: ["Start with free tools before upgrading", "Track your progress every single week"] },
+    { headline: "Common Mistake", body: ["Most people skip this critical step", "Do not make the same mistake they do"] },
+    { headline: "Action Step",    body: ["Pick ONE thing from this video", "Implement it before the week is over"] },
+    { headline: "Did You Know",   body: ["The top performers all do this daily", "You now have the same knowledge they do"] },
   ];
   var fi = 0;
   while (slides.length < 28) {
@@ -256,114 +219,76 @@ function scriptToSlides(title, scriptText) {
     fi++;
   }
 
-  // Final CTA slide
   slides.push({ type: "cta", headline: "Like Subscribe and Share!", body: ["New videos posted every week", "Turn on notifications to never miss one"], cta: "Hit Subscribe now" });
 
-  return slides; // 29-30 slides × 20s = ~10 min
+  return slides;
 }
 
-// ── BUILD ONE SLIDE CLIP ──────────────────────────────────────────────────────
+// ── GENERATE AMBIENT MUSIC ────────────────────────────────────────────────────
 
-function buildSlideClip(ffmpegPath, fontFile, slide, bgColor, outputPath) {
-  var exec    = require("child_process").execSync;
-  var filters = [];
-
-  // Helper: wrap text value in single quotes for ffmpeg filter
-  function ft(str, maxLen) { return "'" + safeText(str, maxLen) + "'"; }
-
-  if (slide.type === "title") {
-    filters.push("drawbox=x=0:y=0:w=iw:h=10:color=0x4488ff:t=fill");
-    filters.push("drawbox=x=0:y=ih-10:w=iw:h=10:color=0x4488ff:t=fill");
-
-    var titleLines = wrapText(slide.headline, 36);
-    var startY = Math.max(200, 310 - titleLines.length * 36);
-    for (var i = 0; i < Math.min(titleLines.length, 3); i++) {
-      filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + ft(titleLines[i], 55) +
-        ":fontcolor=white:fontsize=50:x=(w-text_w)/2:y=" + (startY + i * 66)
-      );
+function generateMusic(ffmpegPath, durationSecs, outputPath) {
+  if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) return outputPath;
+  try {
+    var exec = require("child_process").execSync;
+    var cmd  = "\"" + ffmpegPath + "\" -y " +
+      "-f lavli -i sine=frequency=130:duration=" + (durationSecs + 5) + " " +
+      "-f lavfi -i sine=frequency=130:duration=" + (durationSecs + 5) + " " +
+      "-f lavfi -i sine=frequency=196:duration=" + (durationSecs + 5) + " " +
+      "-f lavfi -i sine=frequency=261:duration=" + (durationSecs + 5) + " " +
+      "-f lavfi -i sine=frequency=392:duration=" + (durationSecs + 5) + " " +
+      "-filter_complex \"[0][1][2][3]amix=inputs=4:duration=longest,volume=0.07\" " +
+      "-c:a aac \"" + outputPath + "\"";
+    // Simpler version that definitely works:
+    cmd = "\"" + ffmpegPath + "\" -y " +
+      "-f lavfi -i \"sine=frequency=220:duration=" + (durationSecs + 5) + "\" " +
+      "-filter_complex \"volume=0.06\" " +
+      "-c:a aac \"" + outputPath + "\"";
+    exec(cmd, { stdio: "pipe", timeout: 30000 });
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+      console.log("     ✓ Background music generated");
+      return outputPath;
     }
-    if (slide.sub) {
-      filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + ft(slide.sub, 60) +
-        ":fontcolor=0x88aaff:fontsize=26:x=(w-text_w)/2:y=530"
-      );
-    }
-
-  } else if (slide.type === "cta") {
-    filters.push("drawbox=x=0:y=0:w=iw:h=10:color=0xff8844:t=fill");
-    filters.push("drawbox=x=0:y=ih-90:w=iw:h=90:color=black@0.6:t=fill");
-    filters.push(
-      "drawtext=fontfile=" + fontFile + ":text=" + ft(slide.headline, 50) +
-      ":fontcolor=0xffaa44:fontsize=46:x=(w-text_w)/2:y=230"
-    );
-    var body = slide.body || [];
-    for (var j = 0; j < Math.min(body.length, 3); j++) {
-      filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + ft(body[j], 60) +
-        ":fontcolor=white:fontsize=28:x=(w-text_w)/2:y=" + (360 + j * 50)
-      );
-    }
-    if (slide.cta) {
-      filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + ft(slide.cta, 55) +
-        ":fontcolor=0xffaa44:fontsize=28:x=(w-text_w)/2:y=h-65"
-      );
-    }
-
-  } else {
-    // Section slide
-    filters.push("drawbox=x=0:y=0:w=iw:h=10:color=0x4488ff:t=fill");
-    filters.push("drawbox=x=60:y=140:w=iw-120:h=110:color=black@0.4:t=fill");
-
-    var headLines = wrapText(slide.headline, 40);
-    for (var hi = 0; hi < Math.min(headLines.length, 2); hi++) {
-      filters.push(
-        "drawtext=fontfile=" + fontFile + ":text=" + ft(headLines[hi], 55) +
-        ":fontcolor=white:fontsize=42:x=(w-text_w)/2:y=" + (158 + hi * 56)
-      );
-    }
-
-    var bodyLines = slide.body || [];
-    for (var bi = 0; bi < Math.min(bodyLines.length, 4); bi++) {
-      var wrapped = wrapText(bodyLines[bi], 58);
-      for (var wi = 0; wi < Math.min(wrapped.length, 2); wi++) {
-        filters.push(
-          "drawtext=fontfile=" + fontFile + ":text=" + ft(wrapped[wi], 65) +
-          ":fontcolor=0xccddff:fontsize=28:x=100:y=" + (300 + bi * 88 + wi * 36)
-        );
-      }
-    }
-
-    // Subtle bottom bar
-    filters.push("drawbox=x=0:y=ih-44:w=iw:h=44:color=black@0.5:t=fill");
-    filters.push(
-      "drawtext=fontfile=" + fontFile + ":text='Subscribe for weekly tips'" +
-      ":fontcolor=0x666666:fontsize=18:x=(w-text_w)/2:y=h-30"
-    );
+  } catch(e) {
+    console.log("     → Music gen error: " + e.message.slice(0, 80));
   }
+  return null;
+}
 
-  var vf = filters.join(",");
+// ── ELEVENLABS VOICEOVER ──────────────────────────────────────────────────────
 
-  // Use shell=false style: write vf to a temp file to avoid any shell escaping issues
-  var cmd = "\"" + ffmpegPath + "\" -y " +
-    "-f lavfi -i color=c=" + bgColor + ":size=1280x720:duration=20 " +
-    "-vf \"" + vf + "\" " +
-    "-c:v libx264 -pix_fmt yuv420p -r 24 -t 20 " +
-    "\"" + outputPath + "\"";
-
-  exec(cmd, { stdio: "pipe", timeout: 60000 });
-  return fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000;
+function generateVoiceover(text, outputPath) {
+  var apiKey  = (config.elevenlabs && config.elevenlabs.api_key) || process.env.ELEVENLABS_API_KEY;
+  var voiceId = (config.elevenlabs && config.elevenlabs.voice_id) || "21m00Tcm4TlvDq8ikWAM";
+  if (!apiKey) return Promise.resolve(null);
+  var trimmed = text.slice(0, 2500);
+  var body    = JSON.stringify({ text: trimmed, model_id: "eleven_monolingual_v1", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
+  return new Promise(function(resolve) {
+    var req = https.request({
+      hostname: "api.elevenlabs.io",
+      path:     "/v1/text-to-speech/" + voiceId,
+      method:   "POST",
+      headers: { "xi-api-key": apiKey, "Content-Type": "application/json", "Accept": "audio/mpeg", "Content-Length": Buffer.byteLength(body) },
+    }, function(res) {
+      if (res.statusCode !== 200) { res.resume(); console.log("     → ElevenLabs: " + res.statusCode); return resolve(null); }
+      var file = fs.createWriteStream(outputPath);
+      res.pipe(file);
+      file.on("finish", function() { file.close(); console.log("     ✓ Voiceover generated"); resolve(outputPath); });
+      file.on("error", function() { resolve(null); });
+    });
+    req.on("error", function() { resolve(null); });
+    req.write(body);
+    req.end();
+  });
 }
 
 // ── BUILD FULL VIDEO ──────────────────────────────────────────────────────────
 
 function buildVideo(title, scriptText, outputPath) {
   var ffmpegPath = findFfmpeg();
-  var fontFile   = findFont();
-
   if (!ffmpegPath) return Promise.resolve({ status: "no_ffmpeg" });
-  if (!fontFile)   return Promise.resolve({ status: "no_font" });
+
+  // Verify sharp is available
+  try { require("sharp"); } catch(e) { return Promise.resolve({ status: "no_sharp" }); }
 
   var exec   = require("child_process").execSync;
   var tmpDir = path.join(process.cwd(), "tmp", "yt_" + Date.now());
@@ -371,93 +296,118 @@ function buildVideo(title, scriptText, outputPath) {
   fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
 
   var slides   = scriptToSlides(title, scriptText);
-  var bgColors = ["0d1b2a", "0a1a2e", "12082a", "0a2018", "1a1208", "081a1a", "1a0818"];
-  var clipPaths = [];
+  var bgKeys   = Object.keys(BG_COLORS);
+  var pngTasks = slides.map(function(slide, i) {
+    return {
+      slide:  slide,
+      bgHex:  bgKeys[i % bgKeys.length],
+      pngPath: path.join(tmpDir, "slide" + String(i).padStart(3, "0") + ".png"),
+    };
+  });
 
-  console.log("     → Building " + slides.length + " slides (~" + Math.round(slides.length * 20 / 60) + " min)...");
+  console.log("     → Rendering " + slides.length + " slides with sharp...");
 
-  for (var i = 0; i < slides.length; i++) {
-    var clipPath = path.join(tmpDir, "clip" + String(i).padStart(3, "0") + ".mp4");
-    var bgColor  = bgColors[i % bgColors.length];
-    try {
-      var ok = buildSlideClip(ffmpegPath, fontFile, slides[i], bgColor, clipPath);
-      if (ok) {
-        clipPaths.push(clipPath);
-      } else {
-        console.log("     → Slide " + i + ": output missing");
-      }
-    } catch(e) {
-      // Log first 300 chars of actual error so we can debug
-      console.log("     → Slide " + i + " failed: " + e.message.slice(0, 300));
-    }
+  // Build all PNGs sequentially to avoid memory spikes
+  function buildPngs(idx) {
+    if (idx >= pngTasks.length) return Promise.resolve();
+    var t = pngTasks[idx];
+    return makeSlidePng(t.slide, t.bgHex, t.pngPath)
+      .then(function() { return buildPngs(idx + 1); })
+      .catch(function(e) {
+        console.log("     → Slide " + idx + " PNG error: " + e.message.slice(0, 60));
+        return buildPngs(idx + 1);
+      });
   }
 
-  if (clipPaths.length === 0) {
-    return Promise.resolve({ status: "no_clips_built" });
-  }
+  return buildPngs(0).then(function() {
+    var validPngs = pngTasks.filter(function(t) {
+      return fs.existsSync(t.pngPath) && fs.statSync(t.pngPath).size > 1000;
+    });
 
-  console.log("     → " + clipPaths.length + "/" + slides.length + " clips built, concatenating...");
+    if (validPngs.length === 0) return { status: "no_pngs_built" };
+    console.log("     → " + validPngs.length + "/" + slides.length + " PNGs ready, building clips...");
 
-  var listFile = path.join(tmpDir, "list.txt");
-  fs.writeFileSync(listFile, clipPaths.map(function(f) { return "file '" + f + "'"; }).join("\n"));
-
-  var concatPath = path.join(tmpDir, "concat.mp4");
-  try {
-    exec(
-      "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -c copy \"" + concatPath + "\"",
-      { stdio: "pipe", timeout: 300000 }
-    );
-  } catch(e) {
-    return Promise.resolve({ status: "concat_error", message: e.message.slice(0, 150) });
-  }
-
-  var totalSecs = clipPaths.length * 20;
-  var musicPath = path.join(process.cwd(), "tmp", "ambient.aac");
-  var music     = generateMusic(ffmpegPath, totalSecs, musicPath);
-  var voicePath = path.join(tmpDir, "voice.mp3");
-
-  return generateVoiceover(scriptText.slice(0, 2500), voicePath).then(function(voiceFile) {
-    var finalPath = outputPath;
-    var mixCmd;
-
-    if (voiceFile && music) {
-      // Voice full volume + music soft in background
-      mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + voiceFile + "\" -i \"" + music + "\" " +
-        "-filter_complex \"[1:a]volume=1.0,apad[v];[2:a]volume=0.07[m];[v][m]amix=inputs=2:duration=first[out]\" " +
-        "-map 0:v -map \"[out]\" -c:v copy -c:a aac -shortest \"" + finalPath + "\"";
-      console.log("     → Mixing voice + music...");
-    } else if (voiceFile) {
-      mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + voiceFile + "\" " +
-        "-map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + finalPath + "\"";
-      console.log("     → Adding voiceover...");
-    } else if (music) {
-      mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + music + "\" " +
-        "-map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + finalPath + "\"";
-      console.log("     → Adding ambient music...");
-    } else {
-      mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + finalPath + "\"";
-    }
-
-    try {
-      require("child_process").execSync(mixCmd, { stdio: "pipe", timeout: 300000 });
-    } catch(e) {
-      console.log("     → Audio mix failed (" + e.message.slice(0, 80) + "), saving silent");
+    // Convert each PNG → 20-second video clip
+    var clipPaths = [];
+    for (var ci = 0; ci < validPngs.length; ci++) {
+      var clipPath = path.join(tmpDir, "clip" + String(ci).padStart(3, "0") + ".mp4");
       try {
-        require("child_process").execSync(
-          "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + finalPath + "\"",
-          { stdio: "pipe" }
+        exec(
+          "\"" + ffmpegPath + "\" -y -loop 1 -i \"" + validPngs[ci].pngPath + "\" " +
+          "-c:v libx264 -pix_fmt yuv420p -r 24 -t 20 \"" + clipPath + "\"",
+          { stdio: "pipe", timeout: 60000 }
         );
-      } catch(e2) { return { status: "final_error", message: e2.message.slice(0, 100) }; }
+        if (fs.existsSync(clipPath) && fs.statSync(clipPath).size > 1000) {
+          clipPaths.push(clipPath);
+        }
+      } catch(e) {
+        console.log("     → Clip " + ci + " error: " + e.message.slice(0, 80));
+      }
     }
 
-    if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10000) {
-      return { status: "output_missing" };
+    if (clipPaths.length === 0) return { status: "no_clips_built" };
+    console.log("     → " + clipPaths.length + " clips built, concatenating...");
+
+    var listFile   = path.join(tmpDir, "list.txt");
+    var concatPath = path.join(tmpDir, "concat.mp4");
+    fs.writeFileSync(listFile, clipPaths.map(function(f) { return "file '" + f + "'"; }).join("\n"));
+
+    try {
+      exec(
+        "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -c copy \"" + concatPath + "\"",
+        { stdio: "pipe", timeout: 300000 }
+      );
+    } catch(e) {
+      return { status: "concat_error", message: e.message.slice(0, 100) };
     }
 
-    var sizeMb = (fs.statSync(finalPath).size / 1024 / 1024).toFixed(1);
-    var mins   = Math.round(clipPaths.length * 20 / 60);
-    console.log("     ✓ Video: " + sizeMb + "MB ~" + mins + "min | text=YES voice=" + (!!voiceFile) + " music=" + (!!music) + " slides=" + clipPaths.length);
-    return { status: "built", path: finalPath, size_mb: sizeMb, minutes: mins, slides: clipPaths.length, voice: !!voiceFile, music: !!music };
+    var totalSecs = clipPaths.length * 20;
+    var musicPath = path.join(process.cwd(), "tmp", "ambient.aac");
+    var music     = generateMusic(ffmpegPath, totalSecs, musicPath);
+    var voicePath = path.join(tmpDir, "voice.mp3");
+
+    return generateVoiceover(scriptText.slice(0, 2500), voicePath).then(function(voiceFile) {
+      var finalPath = outputPath;
+      var mixCmd;
+
+      if (voiceFile && music) {
+        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + voiceFile + "\" -i \"" + music + "\" " +
+          "-filter_complex \"[1:a]volume=1.0,apad[v];[2:a]volume=0.07[m];[v][m]amix=inputs=2:duration=first[out]\" " +
+          "-map 0:v -map \"[out]\" -c:v copy -c:a aac -shortest \"" + finalPath + "\"";
+        console.log("     → Mixing voice + music...");
+      } else if (voiceFile) {
+        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + voiceFile + "\" " +
+          "-map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + finalPath + "\"";
+        console.log("     → Adding voiceover...");
+      } else if (music) {
+        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + music + "\" " +
+          "-map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + finalPath + "\"";
+        console.log("     → Adding ambient music...");
+      } else {
+        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + finalPath + "\"";
+      }
+
+      try {
+        require("child_process").execSync(mixCmd, { stdio: "pipe", timeout: 300000 });
+      } catch(e) {
+        console.log("     → Audio mix error: " + e.message.slice(0, 80) + " — saving silent");
+        try {
+          require("child_process").execSync(
+            "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + finalPath + "\"",
+            { stdio: "pipe" }
+          );
+        } catch(e2) { return { status: "final_error" }; }
+      }
+
+      if (!fs.existsSync(finalPath) || fs.statSync(finalPath).size < 10000) {
+        return { status: "output_missing" };
+      }
+
+      var sizeMb = (fs.statSync(finalPath).size / 1024 / 1024).toFixed(1);
+      var mins   = Math.round(clipPaths.length * 20 / 60);
+      console.log("     ✓ Video: " + sizeMb + "MB ~" + mins + "min | text=YES voice=" + (!!voiceFile) + " music=" + (!!music) + " slides=" + clipPaths.length);
+      return { status: "built", path: finalPath, size_mb: sizeMb, minutes: mins, slides: clipPaths.length, voice: !!voiceFile, music: !!music };
+    });
   });
 }
 
@@ -468,10 +418,8 @@ function getAccessToken() {
   var cs  = config.youtube.client_secret;
   var rt  = config.youtube.refresh_token;
   if (!cid || !cs || !rt) return Promise.reject(new Error("YouTube credentials not configured"));
-  var body = "client_id=" + encodeURIComponent(cid) +
-    "&client_secret=" + encodeURIComponent(cs) +
-    "&refresh_token=" + encodeURIComponent(rt) +
-    "&grant_type=refresh_token";
+  var body = "client_id=" + encodeURIComponent(cid) + "&client_secret=" + encodeURIComponent(cs) +
+    "&refresh_token=" + encodeURIComponent(rt) + "&grant_type=refresh_token";
   return new Promise(function(resolve, reject) {
     var req = https.request({
       hostname: "oauth2.googleapis.com", path: "/token", method: "POST",
@@ -484,7 +432,7 @@ function getAccessToken() {
           var r = JSON.parse(data);
           if (r.access_token) { console.log("     → Access token obtained"); resolve(r.access_token); }
           else reject(new Error("Token error: " + JSON.stringify(r)));
-        } catch(e) { reject(new Error("Token parse error")); }
+        } catch(e) { reject(e); }
       });
     });
     req.on("error", reject);
@@ -513,11 +461,9 @@ function uploadVideo(videoFilePath, scriptData) {
         path:     "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
         method:   "POST",
         headers: {
-          "Authorization":           "Bearer " + accessToken,
-          "Content-Type":            "application/json",
-          "X-Upload-Content-Type":   "video/mp4",
-          "X-Upload-Content-Length": fileSize,
-          "Content-Length":          Buffer.byteLength(initBody),
+          "Authorization": "Bearer " + accessToken, "Content-Type": "application/json",
+          "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": fileSize,
+          "Content-Length": Buffer.byteLength(initBody),
         },
       }, function(res) {
         var uploadUrl = res.headers.location;
@@ -526,9 +472,7 @@ function uploadVideo(videoFilePath, scriptData) {
         var videoData = fs.readFileSync(videoFilePath);
         var urlObj    = new URL(uploadUrl);
         var upReq = https.request({
-          hostname: urlObj.hostname,
-          path:     urlObj.pathname + urlObj.search,
-          method:   "PUT",
+          hostname: urlObj.hostname, path: urlObj.pathname + urlObj.search, method: "PUT",
           headers: { "Content-Type": "video/mp4", "Content-Length": fileSize },
         }, function(upRes) {
           var body = "";
@@ -543,7 +487,7 @@ function uploadVideo(videoFilePath, scriptData) {
               } else {
                 resolve({ status: "error", body: body.slice(0, 200) });
               }
-            } catch(e) { resolve({ status: "parse_error", body: body.slice(0, 200) }); }
+            } catch(e) { resolve({ status: "parse_error" }); }
           });
         });
         upReq.on("error", function(e) { resolve({ status: "network_error", message: e.message }); });
@@ -554,9 +498,7 @@ function uploadVideo(videoFilePath, scriptData) {
       initReq.write(initBody);
       initReq.end();
     });
-  }).catch(function(err) {
-    return { status: "error", message: err.message };
-  });
+  }).catch(function(err) { return { status: "error", message: err.message }; });
 }
 
 // ── RESEARCH / SCRIPT / METADATA ─────────────────────────────────────────────
@@ -566,8 +508,8 @@ function researchTopics(niche) {
     model: config.anthropic.model, max_tokens: 1000,
     messages: [{ role: "user", content:
       "Generate 3 YouTube video topics for a faceless channel in the \"" + niche + "\" niche.\n" +
-      "Return ONLY a JSON array. No markdown:\n" +
-      "[{\"title\":\"Top 10 AI Tools for Small Business in 2025\",\"hook\":\"In the next 8 minutes...\",\"why_rank\":\"High search volume\",\"affiliate\":\"AI tools\"}]"
+      "Return ONLY a JSON array, no markdown:\n" +
+      "[{\"title\":\"Top 10 AI Tools for Small Business in 2025\",\"hook\":\"In the next 8 minutes...\",\"why_rank\":\"High search volume\"}]"
     }],
   }).then(function(res) {
     var text  = res.content[0].text.trim().replace(/```json/g,"").replace(/```/g,"").trim();
@@ -584,8 +526,8 @@ function generateScript(topic, niche, product_url) {
     model: config.anthropic.model, max_tokens: 2000,
     system: "You are a YouTube scriptwriter for faceless educational channels.",
     messages: [{ role: "user", content:
-      "Write a YouTube video script for: \"" + topic.title + "\"\nNiche: " + niche + "\nProduct (mention once): " + (product_url || "none") + "\n\n" +
-      "Use ## to mark exactly 5 section headers (e.g. ## 1. Tool Name). Each section 2-3 sentences. Start with a HOOK, end with a subscribe CTA. Total ~8 minutes spoken."
+      "Write a YouTube video script for: \"" + topic.title + "\"\nNiche: " + niche + "\nProduct (mention once naturally): " + (product_url || "none") + "\n\n" +
+      "Structure: Start with HOOK, then use ## to mark exactly 5 section headers (e.g. ## 1. Title), each section 2-3 sentences, end with a subscribe CTA. Total ~8 minutes spoken."
     }],
   }).then(function(res) { return res.content[0].text; });
 }
@@ -602,7 +544,7 @@ function generateMetadata(topic, niche) {
     if (start === -1) throw new Error("no json");
     return JSON.parse(text.slice(start, end + 1));
   }).catch(function() {
-    return { title: topic.title, description: topic.hook + "\n\nSubscribe!", tags: [niche, "tips"], category: "27" };
+    return { title: topic.title, description: "Subscribe for weekly videos!", tags: [niche, "tips"], category: "27" };
   });
 }
 
