@@ -1,23 +1,7 @@
-/**
- * modules/youtube/youtube.js
- * ════════════════════════════
- * Fully autonomous YouTube pipeline:
- * 1. Researches trending topics in your niche
- * 2. Writes SEO-optimized scripts
- * 3. Generates text-to-speech audio (free via Web Speech / ElevenLabs)
- * 4. Creates slide-based video (free via canvas + ffmpeg)
- * 5. Uploads to YouTube with optimized metadata
- * 6. Adds affiliate links to description for day-1 monetization
- *
- * COST: $0 (YouTube Data API is completely free)
- * REVENUE: Ad revenue after 1k subs + affiliate links from day 1
- */
-
+require("dotenv").config();
 const https  = require("https");
-const http   = require("http");
 const fs     = require("fs");
 const path   = require("path");
-const { execSync } = require("child_process");
 const Anthropic = require("@anthropic-ai/sdk");
 
 const config  = require("../../config");
@@ -27,401 +11,372 @@ const client   = new Anthropic({ apiKey: config.anthropic.api_key });
 const OUT_DIR  = path.join(process.cwd(), "output", "youtube");
 const DATA_DIR = path.join(process.cwd(), "data", "youtube");
 
+// ── GET FRESH ACCESS TOKEN USING REFRESH TOKEN ────────────────────────────────
+
+function getAccessToken() {
+  var clientId     = config.youtube.client_id;
+  var clientSecret = config.youtube.client_secret;
+  var refreshToken = config.youtube.refresh_token;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    return Promise.reject(new Error("YouTube credentials not configured"));
+  }
+
+  var body = "client_id=" + encodeURIComponent(clientId) +
+    "&client_secret=" + encodeURIComponent(clientSecret) +
+    "&refresh_token=" + encodeURIComponent(refreshToken) +
+    "&grant_type=refresh_token";
+
+  return new Promise(function(resolve, reject) {
+    var options = {
+      hostname: "oauth2.googleapis.com",
+      path:     "/token",
+      method:   "POST",
+      headers: {
+        "Content-Type":   "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    };
+    var req = https.request(options, function(res) {
+      var data = "";
+      res.on("data", function(d) { data += d; });
+      res.on("end", function() {
+        try {
+          var r = JSON.parse(data);
+          if (r.access_token) {
+            console.log("     → YouTube access token obtained");
+            resolve(r.access_token);
+          } else {
+            reject(new Error("Token error: " + JSON.stringify(r)));
+          }
+        } catch(e) { reject(new Error("Token parse error: " + data.slice(0, 100))); }
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 // ── TOPIC RESEARCH ────────────────────────────────────────────────────────────
 
-async function researchTopics(niche) {
-  const response = await client.messages.create({
-    model: config.anthropic.model,
-    max_tokens: 1500,
-    messages: [{
-      role: "user",
-      content: `You are a YouTube growth expert. Generate 5 high-potential video topics for a faceless YouTube channel in the "${niche}" niche.
-
-For each topic provide:
-- Title (SEO-optimized, 60 chars max, includes numbers or power words)
-- Hook (first 15 seconds script — must grab attention instantly)  
-- Why it will rank (search volume reasoning)
-- Affiliate products to mention naturally ($20-100 commission potential)
-
-Focus on topics that are: evergreen, searchable, and easy to make with AI voiceover + screen recording.
-Format as JSON array.`
-    }]
+function researchTopics(niche) {
+  return client.messages.create({
+    model:      config.anthropic.model,
+    max_tokens: 1000,
+    messages: [{ role: "user", content:
+      "Generate 3 YouTube video topics for a faceless channel in the \"" + niche + "\" niche.\n" +
+      "Return ONLY a JSON array. No markdown. Example:\n" +
+      "[{\"title\":\"Top 10 AI Tools for Small Business in 2025\",\"hook\":\"In the next 8 minutes I will show you...\",\"why_rank\":\"High search volume\",\"affiliate\":\"AI tools with 20-40% commissions\"}]"
+    }],
+  }).then(function(res) {
+    var text  = res.content[0].text.trim();
+    var clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    var start = clean.indexOf("[");
+    var end   = clean.lastIndexOf("]");
+    if (start === -1 || end === -1) throw new Error("No JSON array found");
+    return JSON.parse(clean.slice(start, end + 1));
+  }).catch(function() {
+    return [{
+      title:     "Top 10 AI Tools for " + niche + " in 2025 (That Actually Work)",
+      hook:      "In the next 8 minutes I will show you the exact AI tools helping people in " + niche + " save 10 hours every week.",
+      why_rank:  "High search volume, evergreen",
+      affiliate: "AI tools with affiliate programs",
+    }];
   });
-
-  const text = response.content[0].text;
-  try {
-    const clean = text.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-    return JSON.parse(clean);
-  } catch {
-    // Parse failed — return structured default
-    return [
-      {
-        title:    `Top 10 AI Tools for ${niche} in 2025 (That Actually Work)`,
-        hook:     `In the next 8 minutes, I'm going to show you the exact AI tools that are helping people in ${niche} save 10 hours every week — and most of them are completely free.`,
-        why_rank: "High search volume, evergreen, tool comparison content ranks well",
-        affiliate: `AI tools with affiliate programs: 20-40% recurring commissions`,
-      }
-    ];
-  }
 }
 
 // ── SCRIPT GENERATION ─────────────────────────────────────────────────────────
 
-async function generateScript(topic, niche, product_url) {
-  const response = await client.messages.create({
-    model: config.anthropic.model,
-    max_tokens: 3000,
-    system: "You are a professional YouTube scriptwriter specializing in faceless educational channels. Write engaging, valuable scripts that keep viewers watching.",
-    messages: [{
-      role: "user",
-      content: `Write a complete YouTube script for this video:
-
-TITLE: ${topic.title}
-NICHE: ${niche}
-HOOK: ${topic.hook}
-OUR PRODUCT URL: ${product_url || "[PRODUCT URL]"}
-
-Script requirements:
-- 8-12 minutes when spoken at normal pace (~1,200-1,800 words)  
-- Strong hook (first 30 seconds — tease the value)
-- 5-7 main points with real examples
-- Natural transitions between sections
-- Mention our product ONCE organically as a resource (not salesy)
-- Call to action: subscribe + link in description
-- Include [PAUSE] markers for natural breathing
-- Include [B-ROLL: description] markers for visuals
-
-Write the full script now.`
-    }]
-  });
-
-  return response.content[0].text;
+function generateScript(topic, niche, product_url) {
+  return client.messages.create({
+    model:      config.anthropic.model,
+    max_tokens: 2000,
+    system:     "You are a YouTube scriptwriter for faceless educational channels.",
+    messages: [{ role: "user", content:
+      "Write a YouTube script for: " + topic.title + "\n" +
+      "Niche: " + niche + "\n" +
+      "Product URL: " + (product_url || "") + "\n\n" +
+      "Requirements: 8-10 minutes spoken, strong hook, 5 main points, mention product once naturally, subscribe CTA at end."
+    }],
+  }).then(function(res) { return res.content[0].text; });
 }
 
 // ── VIDEO METADATA ────────────────────────────────────────────────────────────
 
-async function generateMetadata(topic, niche) {
-  const response = await client.messages.create({
-    model: config.anthropic.model,
+function generateMetadata(topic, niche) {
+  return client.messages.create({
+    model:      config.anthropic.model,
     max_tokens: 800,
-    messages: [{
-      role: "user",
-      content: `Generate YouTube upload metadata for this video:
-TITLE: ${topic.title}
-NICHE: ${niche}
-
-Provide JSON with:
-{
-  "title": "final SEO title under 100 chars",
-  "description": "full description 500+ words with timestamps, links section, about section",
-  "tags": ["array", "of", "25", "relevant", "tags"],
-  "category": "YouTube category number (22=People&Blogs, 27=Education, 28=Science&Tech)",
-  "thumbnail_text": "bold text for thumbnail overlay (under 6 words)",
-  "end_screen_text": "subscribe CTA text"
-}
-
-Make description include:
-- Hook paragraph
-- What they'll learn (bullet points)  
-- Timestamps (00:00 Intro, 01:30 Point 1, etc.)
-- Links: [FREE RESOURCES] section with affiliate disclaimer
-- About this channel paragraph
-- Subscribe CTA`
-    }]
-  });
-
-  try {
-    const text = response.content[0].text;
-    const clean = text.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-    return JSON.parse(clean);
-  } catch {
+    messages: [{ role: "user", content:
+      "Generate YouTube metadata for: " + topic.title + " (niche: " + niche + ")\n" +
+      "Return ONLY JSON. No markdown:\n" +
+      "{\"title\":\"SEO title under 100 chars\",\"description\":\"300 word description with timestamps and subscribe CTA\",\"tags\":[\"tag1\",\"tag2\",\"tag3\"],\"category\":\"27\",\"thumbnail_text\":\"6 word thumbnail text\"}"
+    }],
+  }).then(function(res) {
+    var text  = res.content[0].text.trim();
+    var clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    var start = clean.indexOf("{");
+    var end   = clean.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("No JSON found");
+    return JSON.parse(clean.slice(start, end + 1));
+  }).catch(function() {
     return {
       title:          topic.title,
-      description:    `${topic.hook}\n\nIn this video we cover everything you need to know about ${niche}.\n\nSubscribe for weekly videos!\n\n#${niche.replace(/\s+/g, "")} #AI #Tutorial`,
-      tags:           [niche, "AI", "tutorial", "how to", "tips", "2025"],
+      description:    topic.hook + "\n\nSubscribe for weekly videos!\n\n#" + niche.replace(/\s+/g, "") + " #AI #Tutorial",
+      tags:           [niche, "AI", "tutorial", "tips", "2025"],
       category:       "27",
-      thumbnail_text: topic.title.split(" ").slice(0, 4).join(" "),
+      thumbnail_text: topic.title.split(" ").slice(0, 5).join(" "),
     };
-  }
+  });
 }
 
 // ── SAVE VIDEO PACKAGE ────────────────────────────────────────────────────────
-// Saves everything the video needs — script, metadata, upload instructions
 
 function saveVideoPackage(topic, script, metadata, niche) {
-  fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.mkdirSync(OUT_DIR,  { recursive: true });
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  const slug      = topic.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50);
-  const videoDir  = path.join(OUT_DIR, slug);
+  var slug     = topic.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50);
+  var videoDir = path.join(OUT_DIR, slug);
   fs.mkdirSync(videoDir, { recursive: true });
 
-  // Script file
-  fs.writeFileSync(path.join(videoDir, "script.txt"), script);
-
-  // Metadata file
-  fs.writeFileSync(path.join(videoDir, "metadata.json"), JSON.stringify(metadata, null, 2));
-
-  // HTML teleprompter (open in browser to record)
-  const teleprompter = buildTeleprompter(topic.title, script);
-  fs.writeFileSync(path.join(videoDir, "teleprompter.html"), teleprompter);
-
-  // Upload instructions
-  const instructions = buildUploadInstructions(metadata, videoDir, niche);
-  fs.writeFileSync(path.join(videoDir, "UPLOAD-INSTRUCTIONS.txt"), instructions);
-
-  // YouTube description ready to paste
+  fs.writeFileSync(path.join(videoDir, "script.txt"),     script);
+  fs.writeFileSync(path.join(videoDir, "metadata.json"),  JSON.stringify(metadata, null, 2));
   fs.writeFileSync(path.join(videoDir, "description.txt"), metadata.description || "");
 
-  // Log to data
-  const logEntry = {
-    date:     new Date().toISOString(),
-    slug,
-    title:    topic.title,
-    status:   "ready_to_upload",
-    dir:      videoDir,
-  };
-  const logFile = path.join(DATA_DIR, "videos.json");
-  const log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, "utf8")) : [];
-  log.push(logEntry);
+  var logFile = path.join(DATA_DIR, "videos.json");
+  var log = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, "utf8")) : [];
+  log.push({ date: new Date().toISOString(), slug: slug, title: topic.title, status: "ready", dir: videoDir });
   fs.writeFileSync(logFile, JSON.stringify(log, null, 2));
 
-  auditLog("YOUTUBE_VIDEO_CREATED", { title: topic.title, dir: videoDir });
+  auditLog("YOUTUBE_VIDEO_CREATED", { title: topic.title });
   return videoDir;
 }
 
-// ── TELEPROMPTER HTML ─────────────────────────────────────────────────────────
+// ── BUILD MP4 VIDEO ───────────────────────────────────────────────────────────
 
-function buildTeleprompter(title, script) {
-  const lines = script.split("\n").map(l => {
-    if (l.includes("[B-ROLL:")) return `<div class="broll">${l}</div>`;
-    if (l.includes("[PAUSE]"))  return `<div class="pause">⏸ PAUSE</div>`;
-    if (l.trim() === "")        return `<br>`;
-    return `<p>${l}</p>`;
-  }).join("\n");
+function buildSimpleVideo(scriptData, outputPath) {
+  // Build a simple slide-based MP4 using ffmpeg if available
+  // Each slide = key point from script displayed for 8 seconds
+  try {
+    var ffmpeg = require("child_process").execSync("which ffmpeg", { encoding: "utf8" }).trim();
+    if (!ffmpeg) return Promise.resolve({ status: "no_ffmpeg" });
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Teleprompter: ${title}</title>
-<style>
-  body { background:#000; color:#fff; font-family:'Georgia',serif; font-size:32px; line-height:1.8; max-width:900px; margin:0 auto; padding:40px; }
-  h1 { color:#ffd700; font-size:24px; border-bottom:2px solid #333; padding-bottom:12px; }
-  p { margin:12px 0; }
-  .broll { background:#1a3a1a; color:#7fff7f; padding:8px 16px; border-radius:6px; font-size:20px; font-style:italic; margin:16px 0; }
-  .pause { background:#3a1a1a; color:#ff7f7f; padding:8px 16px; border-radius:6px; font-size:20px; text-align:center; margin:16px 0; }
-  .controls { position:fixed; bottom:20px; right:20px; display:flex; gap:12px; }
-  button { background:#ffd700; color:#000; border:none; padding:12px 24px; font-size:18px; border-radius:8px; cursor:pointer; font-weight:bold; }
-  #speed { width:120px; }
-</style>
-</head>
-<body>
-<h1>📹 ${title}</h1>
-<div id="script">${lines}</div>
-<div class="controls">
-  <button onclick="toggleScroll()">▶ Start</button>
-  <input type="range" id="speed" min="1" max="10" value="3" title="Speed">
-  <button onclick="resetScroll()">↑ Reset</button>
-</div>
-<script>
-  let scrolling = false, interval = null;
-  function getSpeed() { return (11 - document.getElementById('speed').value) * 50; }
-  function toggleScroll() {
-    scrolling = !scrolling;
-    document.querySelector('.controls button').textContent = scrolling ? '⏸ Pause' : '▶ Start';
-    if (scrolling) interval = setInterval(() => window.scrollBy(0, 1), getSpeed());
-    else clearInterval(interval);
+    var title    = scriptData.title || "AI Tools Video";
+    var lines    = (scriptData.script || title).split("\n").filter(function(l) { return l.trim().length > 20; }).slice(0, 8);
+    var slides   = lines.length > 0 ? lines : [title];
+    var tmpDir   = path.join(process.cwd(), "tmp", "video");
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    // Create text slides as images using ffmpeg
+    var imageFiles = [];
+    for (var i = 0; i < slides.length; i++) {
+      var imgPath = path.join(tmpDir, "slide" + i + ".png");
+      var text    = slides[i].replace(/"/g, "'").slice(0, 80);
+      try {
+        require("child_process").execSync(
+          "ffmpeg -y -f lavfi -i color=c=0d1b2a:size=1280x720:duration=8 " +
+          "-vf \"drawtext=text='" + text + "':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10\" " +
+          "-frames:v 1 " + imgPath,
+          { stdio: "pipe" }
+        );
+        imageFiles.push(imgPath);
+      } catch(e) { /* skip this slide */ }
+    }
+
+    if (imageFiles.length === 0) return Promise.resolve({ status: "no_slides" });
+
+    // Combine slides into video
+    var listFile = path.join(tmpDir, "slides.txt");
+    var listContent = imageFiles.map(function(f) {
+      return "file '" + f + "'\nduration 8";
+    }).join("\n");
+    fs.writeFileSync(listFile, listContent);
+
+    require("child_process").execSync(
+      "ffmpeg -y -f concat -safe 0 -i " + listFile + " -vf fps=30 -c:v libx264 -pix_fmt yuv420p " + outputPath,
+      { stdio: "pipe" }
+    );
+
+    var stats = fs.statSync(outputPath);
+    return Promise.resolve({ status: "built", path: outputPath, size_mb: (stats.size / 1024 / 1024).toFixed(1) });
+  } catch(e) {
+    return Promise.resolve({ status: "ffmpeg_unavailable", message: e.message });
   }
-  function resetScroll() { clearInterval(interval); scrolling = false; window.scrollTo(0,0); document.querySelector('.controls button').textContent = '▶ Start'; }
-</script>
-</body>
-</html>`;
 }
 
-// ── UPLOAD INSTRUCTIONS ───────────────────────────────────────────────────────
+// ── UPLOAD TO YOUTUBE ─────────────────────────────────────────────────────────
 
-function buildUploadInstructions(metadata, videoDir, niche) {
-  return `HOW TO UPLOAD THIS VIDEO
-${"═".repeat(50)}
-
-OPTION A — Manual Upload (5 minutes)
-──────────────────────────────────────
-1. Record your video using teleprompter.html
-   (Open in browser, click Start, record your screen reading it)
-   OR use any screen recorder / AI voice tool
-
-2. Go to: studio.youtube.com → Upload
-
-3. Copy-paste from metadata.json:
-   Title:       ${metadata.title || "[see metadata.json]"}
-   Description: (copy from description.txt)
-   Tags:        (copy from metadata.json)
-   Category:    Education (or see metadata.json)
-
-4. Set thumbnail:
-   - Use Canva.com → YouTube Thumbnail template
-   - Bold text: "${metadata.thumbnail_text || "see metadata.json"}"
-   - Bright colors, face or graphic
-
-5. Publish!
-
-OPTION B — Auto-Upload via YouTube API
-──────────────────────────────────────
-Run: node modules/youtube/uploader.js --video="${videoDir}"
-(Requires YouTube API credentials — see README)
-
-AFFILIATE LINKS TO ADD IN DESCRIPTION:
-──────────────────────────────────────
-Add these to the description to earn from day 1:
-• Anthropic Claude:   affiliate link in description
-• Canva:              canva.com/affiliates (up to $36/signup)
-• ConvertKit:         partners.convertkit.com (30% recurring)
-• Notion:             notion.so/referral
-
-UPLOAD CHECKLIST:
-□ Video recorded and exported as MP4
-□ Title copied from metadata.json  
-□ Description pasted from description.txt
-□ Tags added
-□ Thumbnail created and uploaded
-□ End screen added (subscribe button + recent video)
-□ Cards added at 20% and 70% of video
-□ Published as Public (not Unlisted)
-`;
-}
-
-// ── AUTO UPLOADER (YouTube Data API v3) ──────────────────────────────────────
-
-async function uploadToYouTube(videoFilePath, metadata) {
-  const credentials = config.youtube?.credentials;
-  if (!credentials?.access_token) {
-    auditLog("YOUTUBE_UPLOAD_SKIPPED", { reason: "no_credentials" }, "warn");
-    return { status: "manual_required", message: "YouTube API not configured. See UPLOAD-INSTRUCTIONS.txt" };
+function uploadVideo(videoFilePath, scriptData) {
+  if (!config.youtube.refresh_token) {
+    return Promise.resolve({ status: "no_credentials" });
+  }
+  if (!fs.existsSync(videoFilePath)) {
+    return Promise.resolve({ status: "no_video_file" });
   }
 
-  // YouTube Data API v3 resumable upload
-  const videoData   = fs.readFileSync(videoFilePath);
-  const fileSize    = fs.statSync(videoFilePath).size;
-
-  const initBody = JSON.stringify({
-    snippet: {
-      title:       metadata.title,
-      description: metadata.description,
-      tags:        metadata.tags,
-      categoryId:  metadata.category || "27",
-    },
-    status: { privacyStatus: "public", selfDeclaredMadeForKids: false },
-  });
-
-  return new Promise((resolve, reject) => {
-    const initOptions = {
-      hostname: "www.googleapis.com",
-      path:     "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      method:   "POST",
-      headers: {
-        "Authorization":  `Bearer ${credentials.access_token}`,
-        "Content-Type":   "application/json",
-        "X-Upload-Content-Type": "video/mp4",
-        "X-Upload-Content-Length": fileSize,
-        "Content-Length": Buffer.byteLength(initBody),
-      },
+  return getAccessToken().then(function(accessToken) {
+    var metadata = {
+      title:       (scriptData.title || "AI Tools Video").slice(0, 100),
+      description: scriptData.description || "Subscribe for weekly AI tools videos!\n\n" + (scriptData.product_url || ""),
+      tags:        scriptData.tags || ["AI", "tools", "tutorial"],
+      categoryId:  "27",
     };
 
-    const initReq = https.request(initOptions, (res) => {
-      const uploadUrl = res.headers.location;
-      if (!uploadUrl) return resolve({ status: "error", message: "No upload URL returned" });
+    var initBody = JSON.stringify({
+      snippet: {
+        title:       metadata.title,
+        description: metadata.description,
+        tags:        metadata.tags,
+        categoryId:  metadata.categoryId,
+      },
+      status: { privacyStatus: "public", selfDeclaredMadeForKids: false },
+    });
 
-      // Upload the actual video
-      const urlObj    = new URL(uploadUrl);
-      const upOptions = {
-        hostname: urlObj.hostname,
-        path:     urlObj.pathname + urlObj.search,
-        method:   "PUT",
+    var fileSize = fs.statSync(videoFilePath).size;
+
+    return new Promise(function(resolve) {
+      var initOptions = {
+        hostname: "www.googleapis.com",
+        path:     "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+        method:   "POST",
         headers: {
-          "Content-Type":   "video/mp4",
-          "Content-Length": fileSize,
+          "Authorization":           "Bearer " + accessToken,
+          "Content-Type":            "application/json",
+          "X-Upload-Content-Type":   "video/mp4",
+          "X-Upload-Content-Length": fileSize,
+          "Content-Length":          Buffer.byteLength(initBody),
         },
       };
 
-      const upReq = https.request(upOptions, (upRes) => {
-        let body = "";
-        upRes.on("data", d => body += d);
-        upRes.on("end", () => {
-          try {
-            const result = JSON.parse(body);
-            auditLog("YOUTUBE_UPLOADED", { video_id: result.id, title: metadata.title }, "financial");
-            resolve({ status: "success", video_id: result.id, url: `https://youtu.be/${result.id}` });
-          } catch {
-            resolve({ status: "error", body: body.slice(0, 200) });
-          }
+      var initReq = https.request(initOptions, function(res) {
+        var uploadUrl = res.headers.location;
+        if (!uploadUrl) {
+          console.log("     → No upload URL from YouTube");
+          return resolve({ status: "error", message: "No upload URL" });
+        }
+
+        console.log("     → Upload URL obtained, uploading video...");
+        var videoData = fs.readFileSync(videoFilePath);
+        var urlObj    = new URL(uploadUrl);
+
+        var upOptions = {
+          hostname: urlObj.hostname,
+          path:     urlObj.pathname + urlObj.search,
+          method:   "PUT",
+          headers: {
+            "Content-Type":   "video/mp4",
+            "Content-Length": fileSize,
+          },
+        };
+
+        var upReq = https.request(upOptions, function(upRes) {
+          var body = "";
+          upRes.on("data", function(d) { body += d; });
+          upRes.on("end", function() {
+            try {
+              var result = JSON.parse(body);
+              if (result.id) {
+                console.log("     → Uploaded! https://youtu.be/" + result.id);
+                auditLog("YOUTUBE_UPLOADED", { video_id: result.id, title: metadata.title });
+                resolve({ status: "success", video_id: result.id, url: "https://youtu.be/" + result.id });
+              } else {
+                console.log("     → Upload response: " + body.slice(0, 200));
+                resolve({ status: "error", body: body.slice(0, 200) });
+              }
+            } catch(e) {
+              resolve({ status: "parse_error", body: body.slice(0, 200) });
+            }
+          });
         });
+        upReq.on("error", function(e) { resolve({ status: "network_error", message: e.message }); });
+        upReq.write(videoData);
+        upReq.end();
       });
 
-      upReq.on("error", reject);
-      upReq.write(videoData);
-      upReq.end();
+      initReq.on("error", function(e) { resolve({ status: "init_error", message: e.message }); });
+      initReq.write(initBody);
+      initReq.end();
     });
-
-    initReq.on("error", reject);
-    initReq.write(initBody);
-    initReq.end();
+  }).catch(function(err) {
+    console.log("     → YouTube upload failed: " + err.message);
+    return { status: "error", message: err.message };
   });
 }
 
-// ── GROWTH TRACKER ─────────────────────────────────────────────────────────────
+// ── GROWTH TRACKER ────────────────────────────────────────────────────────────
 
 function getGrowthStatus() {
-  const logFile = path.join(DATA_DIR, "videos.json");
-  const videos  = fs.existsSync(logFile)
-    ? JSON.parse(fs.readFileSync(logFile, "utf8")) : [];
-
-  const stats = {
-    videos_created:      videos.length,
-    videos_uploaded:     videos.filter(v => v.status === "uploaded").length,
-    subs_target:         1000,
-    hours_target:        4000,
-    progress_note:       videos.length === 0
-      ? "No videos yet. Run YouTube module to create first video."
-      : `${videos.length} videos created. Keep uploading daily to hit 1k subs.`,
-    monetization_status: "Not yet eligible (need 1,000 subs + 4,000 watch hours)",
-    affiliate_active:    true,
-    affiliate_note:      "Earning from affiliate links in descriptions from day 1",
+  var logFile = path.join(DATA_DIR, "videos.json");
+  var videos  = fs.existsSync(logFile) ? JSON.parse(fs.readFileSync(logFile, "utf8")) : [];
+  return {
+    videos_created:  videos.length,
+    videos_uploaded: videos.filter(function(v) { return v.status === "uploaded"; }).length,
+    subs_target:     1000,
+    hours_target:    4000,
+    progress_note:   videos.length === 0 ? "No videos yet." : videos.length + " videos created.",
   };
-
-  return stats;
 }
 
 // ── MAIN RUN FUNCTION ─────────────────────────────────────────────────────────
 
-async function run(niche, product_url) {
+function run(niche, product_url) {
   console.log("\n  📹 YouTube Module running...");
   fs.mkdirSync(OUT_DIR,  { recursive: true });
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  // Research topics
-  console.log("     → Researching trending topics...");
-  const topics = await researchTopics(niche);
-  const topic  = topics[0]; // best topic
+  var topicData, scriptText, metaData, videoDir;
 
-  // Generate script
-  console.log(`     → Writing script: "${topic.title}"`);
-  const script = await generateScript(topic, niche, product_url);
+  return researchTopics(niche).then(function(topics) {
+    topicData = topics[0];
+    console.log("     → Writing script: \"" + topicData.title + "\"");
+    return generateScript(topicData, niche, product_url);
+  }).then(function(script) {
+    scriptText = script;
+    console.log("     → Generating SEO metadata...");
+    return generateMetadata(topicData, niche);
+  }).then(function(metadata) {
+    metaData = metadata;
+    videoDir = saveVideoPackage(topicData, scriptText, metaData, niche);
+    console.log("     ✓ Video package saved: " + path.basename(videoDir));
 
-  // Generate metadata
-  console.log("     → Generating SEO metadata...");
-  const metadata = await generateMetadata(topic, niche);
+    // Try to build video if ffmpeg available
+    var videoPath = path.join(videoDir, "video.mp4");
+    return buildSimpleVideo({ title: topicData.title, script: scriptText }, videoPath);
+  }).then(function(videoResult) {
+    if (videoResult.status === "built") {
+      console.log("     ✓ Video built: " + videoResult.size_mb + "MB");
 
-  // Save package
-  const videoDir = saveVideoPackage(topic, script, metadata, niche);
-  console.log(`     ✓ Video package saved: ${path.basename(videoDir)}`);
+      // Try to upload if credentials exist
+      if (config.youtube.refresh_token) {
+        console.log("     → Uploading to YouTube...");
+        return uploadVideo(path.join(videoDir, "video.mp4"), {
+          title:       metaData.title || topicData.title,
+          description: metaData.description || "",
+          tags:        metaData.tags || [],
+          product_url: product_url,
+        }).then(function(uploadResult) {
+          if (uploadResult.status === "success") {
+            console.log("     ✓ Live on YouTube: " + uploadResult.url);
+            // Update log
+            var logFile = path.join(DATA_DIR, "videos.json");
+            var log = JSON.parse(fs.readFileSync(logFile, "utf8"));
+            log[log.length - 1].status = "uploaded";
+            log[log.length - 1].youtube_url = uploadResult.url;
+            fs.writeFileSync(logFile, JSON.stringify(log, null, 2));
+          } else {
+            console.log("     → Upload status: " + uploadResult.status);
+          }
+          return { status: "complete", title: topicData.title, dir: videoDir, upload: uploadResult };
+        });
+      }
+    } else {
+      console.log("     → Video build status: " + videoResult.status + " (script saved)");
+    }
 
-  return {
-    status:   "ready",
-    title:    topic.title,
-    dir:      videoDir,
-    next_step: "Open output/youtube/ folder and follow UPLOAD-INSTRUCTIONS.txt",
-  };
+    return { status: "ready", title: topicData.title, dir: videoDir };
+  });
 }
 
-module.exports = { run, researchTopics, generateScript, uploadToYouTube, getGrowthStatus };
+module.exports = { run: run, researchTopics: researchTopics, generateScript: generateScript, uploadVideo: uploadVideo, getGrowthStatus: getGrowthStatus };
