@@ -26,11 +26,11 @@ function findFfmpeg() {
   return null;
 }
 
-// ── DOWNLOAD FILE (with redirect support) ────────────────────────────────────
+// ── DOWNLOAD FILE ─────────────────────────────────────────────────────────────
 
-function downloadFile(url, destPath, redirectCount) {
-  redirectCount = redirectCount || 0;
-  if (redirectCount > 5) return Promise.reject(new Error("Too many redirects"));
+function downloadFile(url, destPath, hops) {
+  hops = hops || 0;
+  if (hops > 5) return Promise.reject(new Error("Too many redirects"));
   return new Promise(function(resolve, reject) {
     var proto = url.startsWith("https") ? https : http;
     var file  = fs.createWriteStream(destPath);
@@ -38,19 +38,13 @@ function downloadFile(url, destPath, redirectCount) {
       if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
         file.close();
         fs.unlink(destPath, function() {});
-        return downloadFile(res.headers.location, destPath, redirectCount + 1).then(resolve).catch(reject);
+        return downloadFile(res.headers.location, destPath, hops + 1).then(resolve).catch(reject);
       }
-      if (res.statusCode !== 200) {
-        file.close();
-        return reject(new Error("HTTP " + res.statusCode));
-      }
+      if (res.statusCode !== 200) { file.close(); return reject(new Error("HTTP " + res.statusCode)); }
       res.pipe(file);
       file.on("finish", function() { file.close(); resolve(destPath); });
       file.on("error", reject);
-    }).on("error", function(e) {
-      fs.unlink(destPath, function() {});
-      reject(e);
-    });
+    }).on("error", function(e) { fs.unlink(destPath, function() {}); reject(e); });
   });
 }
 
@@ -60,9 +54,7 @@ function getAccessToken() {
   var clientId     = config.youtube.client_id;
   var clientSecret = config.youtube.client_secret;
   var refreshToken = config.youtube.refresh_token;
-  if (!clientId || !clientSecret || !refreshToken) {
-    return Promise.reject(new Error("YouTube credentials not configured"));
-  }
+  if (!clientId || !clientSecret || !refreshToken) return Promise.reject(new Error("YouTube credentials not configured"));
   var body = "client_id=" + encodeURIComponent(clientId) +
     "&client_secret=" + encodeURIComponent(clientSecret) +
     "&refresh_token=" + encodeURIComponent(refreshToken) +
@@ -93,11 +85,10 @@ function getAccessToken() {
 function searchPexelsVideos(query) {
   var apiKey = (config.pexels && config.pexels.api_key) || process.env.PEXELS_API_KEY;
   if (!apiKey) return Promise.resolve([]);
-  var searchQuery = encodeURIComponent(query.slice(0, 40));
   return new Promise(function(resolve) {
     https.get({
       hostname: "api.pexels.com",
-      path:     "/videos/search?query=" + searchQuery + "&orientation=landscape&size=medium&per_page=6",
+      path:     "/videos/search?query=" + encodeURIComponent(query) + "&orientation=landscape&size=medium&per_page=5",
       headers:  { "Authorization": apiKey },
     }, function(res) {
       var data = "";
@@ -105,10 +96,7 @@ function searchPexelsVideos(query) {
       res.on("end", function() {
         try {
           var r = JSON.parse(data);
-          var videos = (r.videos || []).filter(function(v) {
-            return v.duration >= 4 && v.duration <= 30;
-          });
-          resolve(videos);
+          resolve((r.videos || []).filter(function(v) { return v.duration >= 4 && v.duration <= 30; }));
         } catch(e) { resolve([]); }
       });
     }).on("error", function() { resolve([]); });
@@ -117,225 +105,186 @@ function searchPexelsVideos(query) {
 
 function getBestVideoUrl(video) {
   var files = (video.video_files || []).filter(function(f) { return f.file_type === "video/mp4"; });
-  var hd    = files.filter(function(f) { return f.width >= 1280 && f.quality === "hd"; });
+  var hd    = files.filter(function(f) { return f.width >= 1280; });
   if (hd.length > 0) return hd[0].link;
-  var sd = files.filter(function(f) { return f.width >= 640; });
-  if (sd.length > 0) return sd[0].link;
   if (files.length > 0) return files[0].link;
   return null;
 }
 
-// ── DOWNLOAD ROYALTY-FREE MUSIC ───────────────────────────────────────────────
-// Uses a public domain / CC0 music track from the web
+// ── GENERATE SVG SLIDES (text baked in, no font dependency) ──────────────────
 
-function downloadMusic(tmpDir) {
-  // Free motivational background music (CC0 / public domain)
-  var musicUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
-  var musicPath = path.join(tmpDir, "background.mp3");
-  if (fs.existsSync(musicPath)) return Promise.resolve(musicPath);
-  console.log("     → Downloading background music...");
-  return downloadFile(musicUrl, musicPath).then(function() {
-    return musicPath;
-  }).catch(function() {
-    return null; // music is optional — video works without it
-  });
+function scriptToSlides(title, scriptText) {
+  // Break script into chunks — each chunk = one slide (20 seconds)
+  var lines = scriptText.split("\n").map(function(l) { return l.trim(); }).filter(function(l) { return l.length > 10; });
+
+  // Group into ~30 slides of ~3 lines each
+  var slides = [];
+  var chunkSize = 3;
+
+  // Always add title as first slide
+  slides.push({ title: title, lines: [] });
+
+  for (var i = 0; i < lines.length && slides.length < 30; i += chunkSize) {
+    var chunk = lines.slice(i, i + chunkSize);
+    var headline = chunk[0].replace(/[#*]/g, "").slice(0, 60);
+    var body     = chunk.slice(1).map(function(l) { return l.replace(/[#*]/g, "").slice(0, 70); });
+    slides.push({ title: headline, lines: body });
+  }
+
+  // Pad to at least 30 slides for ~10 min video
+  var filler = [
+    "Key Insight", "Pro Tip", "Remember This", "Action Step",
+    "Quick Summary", "Next Steps", "Final Thoughts", "Subscribe for More"
+  ];
+  while (slides.length < 30) {
+    slides.push({ title: filler[slides.length % filler.length], lines: [] });
+  }
+
+  return slides;
 }
 
-// ── BUILD VIDEO WITH PEXELS + TEXT + MUSIC ───────────────────────────────────
+function makeSvg(slide, bgColor) {
+  bgColor = bgColor || "0d1b2a";
+  var titleLines = wrapText(slide.title || "", 38);
+  var titleY     = 300 - (titleLines.length - 1) * 28;
 
-function buildPexelsVideo(niche, title, outputPath) {
+  var titleSvg = titleLines.map(function(line, i) {
+    return '<text x="640" y="' + (titleY + i * 56) + '" font-family="sans-serif" font-size="48" font-weight="bold" fill="white" text-anchor="middle">' + escXml(line) + '</text>';
+  }).join("\n");
+
+  var bodySvg = (slide.lines || []).map(function(line, i) {
+    return '<text x="640" y="' + (420 + i * 44) + '" font-family="sans-serif" font-size="32" fill="#ccddff" text-anchor="middle">' + escXml(line.slice(0, 70)) + '</text>';
+  }).join("\n");
+
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720">\n' +
+    '<rect width="1280" height="720" fill="#' + bgColor + '"/>\n' +
+    '<rect x="0" y="0" width="1280" height="8" fill="#4488ff"/>\n' +
+    titleSvg + "\n" + bodySvg + "\n" +
+    '</svg>';
+}
+
+function wrapText(text, maxChars) {
+  if (text.length <= maxChars) return [text];
+  var words = text.split(" ");
+  var lines = [];
+  var cur   = "";
+  for (var i = 0; i < words.length; i++) {
+    if ((cur + " " + words[i]).trim().length > maxChars) {
+      if (cur) lines.push(cur);
+      cur = words[i];
+    } else {
+      cur = (cur + " " + words[i]).trim();
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function escXml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+// ── BUILD VIDEO ───────────────────────────────────────────────────────────────
+
+function buildVideo(title, scriptText, outputPath) {
   var ffmpegPath = findFfmpeg();
   if (!ffmpegPath) return Promise.resolve({ status: "ffmpeg_unavailable" });
 
-  var tmpDir = path.join(process.cwd(), "tmp", "video");
+  var tmpDir = path.join(process.cwd(), "tmp", "video_" + Date.now());
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  // Generate search terms from niche
-  var words      = niche.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(" ");
-  var searchTerm = words.slice(0, 3).join(" ");
-  var fallbacks  = ["business technology", "people working", "office success"];
+  var slides  = scriptToSlides(title, scriptText);
+  var bgColors = ["0d1b2a", "0a1a2a", "1a0d2a", "0a2a1a", "1a1a0a", "0d2a0d"];
+  var exec    = require("child_process").execSync;
+  var videoFiles = [];
 
-  console.log("     → Searching Pexels: \"" + searchTerm + "\"");
+  console.log("     → Building " + slides.length + " slides (~" + Math.round(slides.length * 20 / 60) + " min video)...");
 
-  var musicPath = null;
+  for (var i = 0; i < slides.length; i++) {
+    var svgPath  = path.join(tmpDir, "slide" + i + ".svg");
+    var pngPath  = path.join(tmpDir, "slide" + i + ".png");
+    var clipPath = path.join(tmpDir, "clip" + i + ".mp4");
+    var bgColor  = bgColors[i % bgColors.length];
 
-  return downloadMusic(tmpDir).then(function(mp3) {
-    musicPath = mp3;
-    return searchPexelsVideos(searchTerm);
-  }).then(function(videos) {
-    if (videos.length === 0) return searchPexelsVideos(fallbacks[0]);
-    return videos;
-  }).then(function(videos) {
-    if (videos.length === 0) return searchPexelsVideos(fallbacks[1]);
-    return videos;
-  }).then(function(videos) {
-    if (videos.length === 0) {
-      console.log("     → No Pexels videos, using color slides");
-      return buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath);
-    }
+    // Write SVG
+    fs.writeFileSync(svgPath, makeSvg(slides[i], bgColor));
 
-    console.log("     → Downloading " + Math.min(videos.length, 4) + " clips...");
-    var clips    = videos.slice(0, 4);
-    var promises = clips.map(function(video, i) {
-      var url      = getBestVideoUrl(video);
-      var clipPath = path.join(tmpDir, "clip" + i + ".mp4");
-      if (!url) return Promise.resolve(null);
-      return downloadFile(url, clipPath)
-        .then(function() { return clipPath; })
-        .catch(function() { return null; });
-    });
-
-    return Promise.all(promises).then(function(clipPaths) {
-      var valid = clipPaths.filter(function(p) { return p && fs.existsSync(p); });
-      if (valid.length === 0) {
-        console.log("     → Clip downloads failed, using color slides");
-        return buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath);
-      }
-
-      console.log("     → Building video with " + valid.length + " clips...");
-      return combineClipsWithTextAndMusic(ffmpegPath, valid, title, outputPath, musicPath);
-    });
-  }).catch(function(e) {
-    console.log("     → Build error: " + e.message.slice(0, 100));
-    return buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath);
-  });
-}
-
-// ── COMBINE CLIPS + TEXT OVERLAY + MUSIC ─────────────────────────────────────
-
-function combineClipsWithTextAndMusic(ffmpegPath, clipPaths, title, outputPath, musicPath) {
-  try {
-    var exec = require("child_process").execSync;
-
-    // Step 1: Normalize each clip to 1280x720 mp4
-    var normalizedPaths = [];
-    for (var i = 0; i < clipPaths.length; i++) {
-      var normPath = clipPaths[i].replace(".mp4", "_norm.mp4");
-      try {
-        exec(
-          "\"" + ffmpegPath + "\" -y -i \"" + clipPaths[i] + "\" " +
-          "-vf \"scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1\" " +
-          "-c:v libx264 -pix_fmt yuv420p -r 30 -an -t 10 \"" + normPath + "\"",
-          { stdio: "pipe", timeout: 60000 }
-        );
-        if (fs.existsSync(normPath)) normalizedPaths.push(normPath);
-      } catch(e) { /* skip this clip */ }
-    }
-
-    if (normalizedPaths.length === 0) {
-      return Promise.resolve({ status: "normalize_failed" });
-    }
-
-    // Step 2: Concat normalized clips
-    var tmpDir   = path.dirname(clipPaths[0]);
-    var listFile = path.join(tmpDir, "concat.txt");
-    fs.writeFileSync(listFile, normalizedPaths.map(function(f) { return "file '" + f + "'"; }).join("\n"));
-
-    var concatPath = path.join(tmpDir, "concat.mp4");
-    exec(
-      "\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -c copy \"" + concatPath + "\"",
-      { stdio: "pipe", timeout: 60000 }
-    );
-
-    // Step 3: Add text overlay (title at bottom, semi-transparent bar)
-    var safeTitle  = title.replace(/'/g, "").replace(/"/g, "").replace(/:/g, " ").slice(0, 55);
-    var withTextPath = path.join(tmpDir, "with_text.mp4");
-
-    // Check if drawtext works on this ffmpeg build
-    var drawtextWorks = false;
+    // Convert SVG to PNG using ffmpeg
     try {
-      exec("\"" + ffmpegPath + "\" -y -f lavfi -i color=black:size=100x100:duration=1 -vf drawtext=text='test':fontsize=12 -frames:v 1 " + path.join(tmpDir, "test.png"), { stdio: "pipe" });
-      drawtextWorks = true;
-    } catch(e) { /* drawtext not available */ }
-
-    if (drawtextWorks) {
+      exec("\"" + ffmpegPath + "\" -y -i \"" + svgPath + "\" \"" + pngPath + "\"", { stdio: "pipe" });
+    } catch(e) {
+      // If SVG fails, create plain color PNG
       try {
-        exec(
-          "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" " +
-          "-vf \"drawbox=y=ih-80:color=black@0.6:width=iw:height=80:t=fill," +
-          "drawtext=text='" + safeTitle + "':fontcolor=white:fontsize=28:x=(w-text_w)/2:y=h-60\" " +
-          "-c:v libx264 -pix_fmt yuv420p -an \"" + withTextPath + "\"",
-          { stdio: "pipe", timeout: 60000 }
-        );
-      } catch(e) {
-        withTextPath = concatPath; // fall back to no text
-      }
-    } else {
-      withTextPath = concatPath;
+        exec("\"" + ffmpegPath + "\" -y -f lavfi -i color=c=" + bgColor + ":size=1280x720:duration=1 -frames:v 1 \"" + pngPath + "\"", { stdio: "pipe" });
+      } catch(e2) { continue; }
     }
 
-    // Step 4: Add music if available
+    if (!fs.existsSync(pngPath)) continue;
+
+    // PNG → 20-second video clip
+    try {
+      exec(
+        "\"" + ffmpegPath + "\" -y -loop 1 -i \"" + pngPath + "\" -t 20 -vf fps=10 -c:v libx264 -pix_fmt yuv420p -tune stillimage \"" + clipPath + "\"",
+        { stdio: "pipe", timeout: 30000 }
+      );
+      if (fs.existsSync(clipPath)) videoFiles.push(clipPath);
+    } catch(e) { /* skip */ }
+  }
+
+  if (videoFiles.length === 0) return Promise.resolve({ status: "no_clips" });
+
+  console.log("     → Concatenating " + videoFiles.length + " clips...");
+
+  // Write concat list
+  var listFile = path.join(tmpDir, "list.txt");
+  fs.writeFileSync(listFile, videoFiles.map(function(f) { return "file '" + f + "'"; }).join("\n"));
+
+  var concatPath = path.join(tmpDir, "concat.mp4");
+  try {
+    exec("\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -c copy \"" + concatPath + "\"", { stdio: "pipe", timeout: 120000 });
+  } catch(e) {
+    return Promise.resolve({ status: "concat_error", message: e.message.slice(0, 100) });
+  }
+
+  // Add background music
+  return downloadMusic(tmpDir).then(function(musicPath) {
     var finalPath = outputPath;
     if (musicPath && fs.existsSync(musicPath)) {
       try {
         exec(
-          "\"" + ffmpegPath + "\" -y -i \"" + withTextPath + "\" -i \"" + musicPath + "\" " +
-          "-filter_complex \"[1:a]volume=0.15,aloop=loop=-1:size=2e+09[music];[music]atrim=0=" + (normalizedPaths.length * 10) + "[trimmed]\" " +
-          "-map 0:v -map \"[trimmed]\" -c:v copy -c:a aac -shortest \"" + finalPath + "\"",
+          "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + musicPath + "\" " +
+          "-filter_complex \"[1:a]volume=0.12,aloop=loop=-1:size=2e+09[m];[m]atrim=0=" + (videoFiles.length * 20) + "[music]\" " +
+          "-map 0:v -map \"[music]\" -c:v copy -c:a aac -shortest \"" + finalPath + "\"",
           { stdio: "pipe", timeout: 120000 }
         );
-        console.log("     → Music added to video");
+        console.log("     → Background music added");
       } catch(e) {
-        // Music failed — just copy video without audio
-        exec("\"" + ffmpegPath + "\" -y -i \"" + withTextPath + "\" -c copy \"" + finalPath + "\"", { stdio: "pipe" });
+        fs.copyFileSync(concatPath, finalPath);
       }
     } else {
-      exec("\"" + ffmpegPath + "\" -y -i \"" + withTextPath + "\" -c copy \"" + finalPath + "\"", { stdio: "pipe" });
+      fs.copyFileSync(concatPath, finalPath);
     }
 
-    if (!fs.existsSync(finalPath)) return Promise.resolve({ status: "output_missing" });
+    if (!fs.existsSync(finalPath)) return { status: "output_missing" };
     var stats = fs.statSync(finalPath);
-    return Promise.resolve({ status: "built", path: finalPath, size_mb: (stats.size / 1024 / 1024).toFixed(1), source: "pexels" });
-
-  } catch(e) {
-    console.log("     → Combine error: " + e.message.slice(0, 150));
-    return Promise.resolve({ status: "build_error", message: e.message.slice(0, 100) });
-  }
+    var mins  = Math.round(videoFiles.length * 20 / 60);
+    console.log("     ✓ Video: " + (stats.size / 1024 / 1024).toFixed(1) + "MB, ~" + mins + " minutes");
+    return { status: "built", path: finalPath, size_mb: (stats.size / 1024 / 1024).toFixed(1), minutes: mins };
+  });
 }
 
-// ── FALLBACK: COLOR SLIDES WITH TEXT ─────────────────────────────────────────
+// ── DOWNLOAD BACKGROUND MUSIC ─────────────────────────────────────────────────
 
-function buildColorSlides(ffmpegPath, tmpDir, title, outputPath, musicPath) {
-  try {
-    var exec   = require("child_process").execSync;
-    var colors = ["0d1b2a", "1a2a3a", "0a2a1a", "2a1a0a", "1a0a2a", "0a1a2a"];
-    var images = [];
-    for (var i = 0; i < colors.length; i++) {
-      var imgPath = path.join(tmpDir, "cslide" + i + ".png");
-      try {
-        exec("\"" + ffmpegPath + "\" -y -f lavfi -i color=c=" + colors[i] + ":size=1280x720:duration=1 -frames:v 1 " + imgPath, { stdio: "pipe" });
-        images.push(imgPath);
-      } catch(e) {}
-    }
-    if (images.length === 0) return Promise.resolve({ status: "no_slides" });
-    var listFile = path.join(tmpDir, "cslides.txt");
-    fs.writeFileSync(listFile, images.map(function(f) { return "file '" + f + "'\nduration 8"; }).join("\n"));
-    var concatPath = path.join(tmpDir, "cconcat.mp4");
-    exec("\"" + ffmpegPath + "\" -y -f concat -safe 0 -i \"" + listFile + "\" -vf fps=30 -c:v libx264 -pix_fmt yuv420p -an \"" + concatPath + "\"", { stdio: "pipe" });
-
-    // Add music if available
-    if (musicPath && fs.existsSync(musicPath)) {
-      try {
-        exec(
-          "\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -i \"" + musicPath + "\" " +
-          "-filter_complex \"[1:a]volume=0.15[music]\" -map 0:v -map \"[music]\" -c:v copy -c:a aac -shortest \"" + outputPath + "\"",
-          { stdio: "pipe" }
-        );
-      } catch(e) {
-        exec("\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" });
-      }
-    } else {
-      exec("\"" + ffmpegPath + "\" -y -i \"" + concatPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" });
-    }
-
-    var stats = fs.statSync(outputPath);
-    return Promise.resolve({ status: "built", path: outputPath, size_mb: (stats.size / 1024 / 1024).toFixed(1), source: "color_slides" });
-  } catch(e) {
-    return Promise.resolve({ status: "build_error", message: e.message.slice(0, 100) });
-  }
+function downloadMusic(tmpDir) {
+  var musicPath = path.join(process.cwd(), "tmp", "music.mp3");
+  if (fs.existsSync(musicPath) && fs.statSync(musicPath).size > 100000) return Promise.resolve(musicPath);
+  var musicUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+  console.log("     → Downloading background music...");
+  return downloadFile(musicUrl, musicPath).then(function() { return musicPath; }).catch(function() { return null; });
 }
 
-// ── TOPIC RESEARCH ────────────────────────────────────────────────────────────
+// ── TOPIC / SCRIPT / METADATA ─────────────────────────────────────────────────
 
 function researchTopics(niche) {
   return client.messages.create({
@@ -350,14 +299,10 @@ function researchTopics(niche) {
     var clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
     var start = clean.indexOf("[");
     var end   = clean.lastIndexOf("]");
-    if (start === -1 || end === -1) throw new Error("No JSON array found");
+    if (start === -1 || end === -1) throw new Error("No JSON array");
     return JSON.parse(clean.slice(start, end + 1));
   }).catch(function() {
-    return [{
-      title:    "Top 10 AI Tools for " + niche + " in 2025 (That Actually Work)",
-      hook:     "In the next 8 minutes I will show you the exact AI tools helping people in " + niche + " save 10 hours every week.",
-      why_rank: "High search volume, evergreen", affiliate: "AI tools with affiliate programs",
-    }];
+    return [{ title: "Top 10 AI Tools for " + niche + " in 2025", hook: "In the next 8 minutes...", why_rank: "Evergreen", affiliate: "AI tools" }];
   });
 }
 
@@ -366,8 +311,8 @@ function generateScript(topic, niche, product_url) {
     model: config.anthropic.model, max_tokens: 2000,
     system: "You are a YouTube scriptwriter for faceless educational channels.",
     messages: [{ role: "user", content:
-      "Write a YouTube script for: " + topic.title + "\nNiche: " + niche + "\nProduct URL: " + (product_url || "") + "\n\n" +
-      "Requirements: 8-10 minutes spoken, strong hook, 5 main points, mention product once naturally, subscribe CTA at end."
+      "Write a detailed YouTube script for: " + topic.title + "\nNiche: " + niche + "\nProduct URL: " + (product_url || "") + "\n\n" +
+      "Requirements: 8-10 minutes spoken content, strong hook opening, 5 clearly labeled main points (use ## for section headers), mention product once naturally, subscribe CTA at end. Use plain text, no markdown except ## headers."
     }],
   }).then(function(res) { return res.content[0].text; });
 }
@@ -381,19 +326,12 @@ function generateMetadata(topic, niche) {
       "{\"title\":\"SEO title under 100 chars\",\"description\":\"300 word description with timestamps and subscribe CTA\",\"tags\":[\"tag1\",\"tag2\",\"tag3\"],\"category\":\"27\",\"thumbnail_text\":\"6 word thumbnail text\"}"
     }],
   }).then(function(res) {
-    var text  = res.content[0].text.trim();
-    var clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    var start = clean.indexOf("{");
-    var end   = clean.lastIndexOf("}");
-    if (start === -1 || end === -1) throw new Error("No JSON found");
-    return JSON.parse(clean.slice(start, end + 1));
+    var text  = res.content[0].text.trim().replace(/```json/g, "").replace(/```/g, "").trim();
+    var start = text.indexOf("{"); var end = text.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("No JSON");
+    return JSON.parse(text.slice(start, end + 1));
   }).catch(function() {
-    return {
-      title: topic.title,
-      description: topic.hook + "\n\nSubscribe for weekly videos!\n\n#" + niche.replace(/\s+/g, "") + " #AI #Tutorial",
-      tags: [niche, "AI", "tutorial", "tips", "2025"], category: "27",
-      thumbnail_text: topic.title.split(" ").slice(0, 5).join(" "),
-    };
+    return { title: topic.title, description: topic.hook + "\n\nSubscribe!", tags: [niche, "AI", "tutorial"], category: "27" };
   });
 }
 
@@ -413,6 +351,8 @@ function saveVideoPackage(topic, script, metadata) {
   auditLog("YOUTUBE_VIDEO_CREATED", { title: topic.title });
   return videoDir;
 }
+
+// ── UPLOAD ────────────────────────────────────────────────────────────────────
 
 function uploadVideo(videoFilePath, scriptData) {
   if (!config.youtube.refresh_token) return Promise.resolve({ status: "no_credentials" });
@@ -441,7 +381,7 @@ function uploadVideo(videoFilePath, scriptData) {
         },
       }, function(res) {
         var uploadUrl = res.headers.location;
-        if (!uploadUrl) { console.log("     → No upload URL"); return resolve({ status: "error", message: "No upload URL" }); }
+        if (!uploadUrl) return resolve({ status: "error", message: "No upload URL" });
         console.log("     → Uploading to YouTube...");
         var videoData = fs.readFileSync(videoFilePath);
         var urlObj    = new URL(uploadUrl);
@@ -459,7 +399,7 @@ function uploadVideo(videoFilePath, scriptData) {
                 auditLog("YOUTUBE_UPLOADED", { video_id: result.id, title: metadata.title });
                 resolve({ status: "success", video_id: result.id, url: "https://youtu.be/" + result.id });
               } else {
-                console.log("     → Upload response: " + body.slice(0, 200));
+                console.log("     → Upload error: " + body.slice(0, 200));
                 resolve({ status: "error", body: body.slice(0, 200) });
               }
             } catch(e) { resolve({ status: "parse_error", body: body.slice(0, 200) }); }
@@ -490,6 +430,8 @@ function getGrowthStatus() {
   };
 }
 
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+
 function run(niche, product_url) {
   console.log("\n  📹 YouTube Module running...");
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -508,12 +450,11 @@ function run(niche, product_url) {
   }).then(function(metadata) {
     metaData = metadata;
     videoDir = saveVideoPackage(topicData, scriptText, metaData);
-    console.log("     ✓ Video package saved: " + path.basename(videoDir));
+    console.log("     ✓ Script saved: " + path.basename(videoDir));
     var videoPath = path.join(videoDir, "video.mp4");
-    return buildPexelsVideo(niche, metaData.title || topicData.title, videoPath);
+    return buildVideo(metaData.title || topicData.title, scriptText, videoPath);
   }).then(function(videoResult) {
     if (videoResult.status === "built") {
-      console.log("     ✓ Video built: " + videoResult.size_mb + "MB (" + (videoResult.source || "pexels") + ")");
       if (config.youtube.refresh_token) {
         return uploadVideo(path.join(videoDir, "video.mp4"), {
           title: metaData.title || topicData.title, description: metaData.description || "",
@@ -533,7 +474,7 @@ function run(niche, product_url) {
         });
       }
     } else {
-      console.log("     → Video status: " + videoResult.status);
+      console.log("     → Video status: " + videoResult.status + (videoResult.message ? " - " + videoResult.message : ""));
     }
     return { status: "ready", title: topicData.title, dir: videoDir };
   });
