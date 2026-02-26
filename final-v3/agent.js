@@ -17,6 +17,8 @@ const gumroad   = require("./modules/gumroad/gumroad-products");
 const affiliate = require("./modules/affiliate/affiliate");
 const brain     = require("./core/brain");
 const heal      = require("./core/self-healing");
+const products  = require("./modules/products/product-engine");
+const products  = require("./core/product-engine");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -241,7 +243,62 @@ async function main() {
     console.log("     → Stack: " + e.stack?.slice(0,200));
   }
 
-  // ── PRINTIFY ──────────────────────────────────────────────────────────
+  // ── PRODUCT ENGINE ────────────────────────────────────────────────────
+  // Runs every day — researches market, creates & publishes best products
+  console.log(c("cyan","\n  🏭 Product creation..."));
+  try {
+    const brainForProducts = {
+      sold:    brain.load().daily_logs.filter(l => l.sales > 0).map(l => l.video_title).slice(-10),
+      flopped: brain.load().knowledge?.failed_topics?.slice(-10) || [],
+    };
+    const prodResult = await products.run(currentNiche, config, brainForProducts, notify.sendTelegram.bind(notify));
+    if (prodResult.products && prodResult.products.length > 0) {
+      for (const p of prodResult.products) {
+        ok(`Product: "${p.name}" @ $${p.price}${p.url ? " — " + p.url : " (saved locally)"}`);
+        // Use first live product URL as the promotion URL
+        if (p.url && !state.product_url) state.product_url = p.url;
+      }
+    } else if (prodResult.status === "skipped") {
+      inf("Products: daily limit reached");
+    }
+  } catch(e) {
+    heal.logError(e.message, "product_engine");
+    wrn(`Products: ${e.message}`);
+  }
+
+  // ── PRODUCTS ──────────────────────────────────────────────────────────
+  console.log(c("cyan","\n  🏭 Product creation..."));
+  try {
+    const productResult = await products.run(
+      currentNiche,
+      config.anthropic.api_key,
+      config.anthropic.model,
+      process.env.GUMROAD_ACCESS_TOKEN || null
+    );
+    if (productResult.status === "created") {
+      ok(`New product: "${productResult.title}" at $${productResult.price} (competitors: $${productResult.competitor_price})`);
+      if (productResult.url) {
+        ok(`Live on Gumroad: ${productResult.url}`);
+        await notify.sendTelegram(
+          `🛍️ New Product Live!\n"${productResult.title}"\n` +
+          `Price: $${productResult.price} (competitors charge $${productResult.competitor_price})\n` +
+          `URL: ${productResult.url}\n\nInsight: ${productResult.insight}`
+        ).catch(()=>{});
+      } else {
+        inf(`Product built locally — add GUMROAD_ACCESS_TOKEN to Railway to auto-publish`);
+      }
+    } else if (productResult.status === "skipped") {
+      inf("Product already created today");
+    } else if (productResult.status === "error") {
+      heal.logError(productResult.message, "product_engine");
+      wrn(`Product: ${productResult.message}`);
+    }
+  } catch(e) {
+    heal.logError(e.message, "product_engine");
+    wrn(`Product engine: ${e.message}`);
+  }
+
+  // ── PRINTIFY (when unlocked) ───────────────────────────────────────────
   const unlocks = treasury.loadUnlocks();
   if (unlocks.printify?.status==="active" && [1,3,5].includes(new Date().getDay())) {
     console.log(c("cyan","\n  🛒 Printify pipeline..."));
@@ -316,6 +373,7 @@ async function main() {
       `Niche: "${currentNiche}"`,
       `YouTube: ${ytStats.videos_created} videos | Best angle: ${brainFinal.best_angle||"learning..."}`,
       `Brain: ${brainFinal.total_videos} tracked | $${brainFinal.total_revenue.toFixed(2)} revenue`,
+      `Products: ${prodStats.total_products} created | Types: ${JSON.stringify(prodStats.by_type)}`,
       `Self-Heal: ${healReport.total_errors} errors caught | ${healReport.active_flags.length} active fixes`,
       `Earned: $${(fin.owner_total_earned||0).toFixed(2)}`,
     ],
@@ -332,6 +390,7 @@ async function main() {
     `  Revenue:    ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n` +
     `  Videos:     ${state.videos_built} uploaded\n` +
     `  Brain:      ${brainFinal.total_videos} tracked | ${brainFinal.best_angle||"learning"} winning\n` +
+    `  Products:   ${prodStats.total_products} total | ${prodStats.recent.filter(p=>p.url).length} live on Gumroad\n` +
     `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n`
   );
 }
