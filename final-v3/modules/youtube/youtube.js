@@ -381,7 +381,18 @@ function getAccessToken() {
       function(res) {
         var data = "";
         res.on("data", function(d){ data += d; });
-        res.on("end", function(){ try { var r = JSON.parse(data); if (r.access_token) resolve(r.access_token); else reject(new Error("Token: " + JSON.stringify(r))); } catch(e){ reject(e); } });
+        res.on("end", function(){
+          try {
+            var r = JSON.parse(data);
+            if (r.access_token) {
+              console.log("     → Access token obtained");
+              resolve(r.access_token);
+            } else {
+              console.log("     → OAuth token error: " + JSON.stringify(r).slice(0,200));
+              reject(new Error("Token: " + JSON.stringify(r)));
+            }
+          } catch(e){ reject(e); }
+        });
       });
     req.on("error", reject); req.write(body); req.end();
   });
@@ -426,7 +437,16 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
         headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json", "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": fileSize, "Content-Length": Buffer.byteLength(initBody) },
       }, function(res) {
         var uploadUrl = res.headers.location;
-        if (!uploadUrl) return resolve({ status: "error", message: "No upload URL" });
+        if (!uploadUrl) {
+          // Read error body to understand why YouTube rejected the init request
+          var errBody = "";
+          res.on("data", function(d){ errBody += d; });
+          res.on("end", function(){
+            console.log("     → YouTube init HTTP " + res.statusCode + " | " + errBody.slice(0,200));
+            resolve({ status: "error", message: "No upload URL (HTTP " + res.statusCode + ")" });
+          });
+          return;
+        }
         console.log("     → Uploading to YouTube...");
         var videoData = fs.readFileSync(videoFilePath);
         var urlObj = new URL(uploadUrl);
