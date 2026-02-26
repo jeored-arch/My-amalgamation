@@ -15,6 +15,8 @@ const youtube   = require("./modules/youtube/youtube");
 const printify  = require("./modules/printify/printify");
 const gumroad   = require("./modules/gumroad/gumroad-products");
 const affiliate = require("./modules/affiliate/affiliate");
+const brain     = require("./core/brain");
+const heal      = require("./core/self-healing");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -42,120 +44,218 @@ function isPaused() {
   return fs.existsSync(path.join(DATA_DIR,"paused.flag"));
 }
 
+// ── HEARTBEAT ─────────────────────────────────────────────────────────────────
+async function heartbeat() {
+  try {
+    console.log("\n[Heartbeat] " + new Date().toLocaleTimeString("en-US",{timeZone:config.owner.timezone}));
+    const { newSales } = await revenue.runRevenueCheck().catch(() => ({ newSales:[] }));
+    const state = loadState();
+    for (const sale of newSales) {
+      const amount = parseFloat(sale.price||0);
+      brain.recordSale(amount, state.niche);
+      await notify.sendTelegram(
+        `💰 SALE! $${amount.toFixed(2)}\n` +
+        `Product: ${sale.product_name || "Digital product"}\n` +
+        `Time: ${new Date().toLocaleTimeString("en-US",{timeZone:config.owner.timezone})}`
+      ).catch(()=>{});
+    }
+    const hour = new Date().getHours();
+    if (hour === 12) {
+      const r = brain.getReport();
+      await notify.sendTelegram(
+        `📊 Midday Check-in\n━━━━━━━━━━━━━━\nDay ${state.day}\n` +
+        `Revenue: $${r.total_revenue.toFixed(2)}\nVideos: ${r.total_videos}\n` +
+        `Days since sale: ${r.days_since_sale}\n✅ Agent running`
+      ).catch(()=>{});
+    }
+  } catch(e) {
+    heal.logError(e.message, "heartbeat");
+    console.log("[Heartbeat] error: " + e.message.slice(0,80));
+  }
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 async function main() {
   fs.mkdirSync(DATA_DIR,{recursive:true});
   vault.validateSetup();
 
   if (isPaused()) {
-    console.log(c("yellow", "Agent is paused. Send resume to your Telegram bot to restart."));
-    await notify.sendTelegram("Agent is paused. Send resume to restart it.").catch(()=>{});
+    await notify.sendTelegram("⏸ Agent paused. Send /resume to restart.").catch(()=>{});
     return;
   }
 
+  // ── SELF-HEAL FIRST — before anything else ────────────────────────────
+  // Agent reads yesterday's errors, reasons about them, applies fixes
+  console.log("\n  🔧 Self-healing check...");
+  const healResult = await heal.runHealCycle(
+    config.anthropic.api_key,
+    config.anthropic.model,
+    notify.sendTelegram.bind(notify)
+  );
+  if (healResult.healed) {
+    ok(`Self-healed ${healResult.fixes.length} issue(s) from previous run`);
+  } else {
+    inf("No errors to heal — clean start");
+  }
+
+  // Read active flags set by self-healer
+  const flags = heal.getActiveFlags();
+  if (Object.keys(flags).length > 0) {
+    inf("Active behavior flags: " + Object.keys(flags).join(", "));
+  }
+
+  // ── BRAIN MORNING BRIEF ───────────────────────────────────────────────
+  const state       = loadState();
+  const brainReport = brain.getReport();
+  const stratBrief  = brain.getStrategyBrief();
+
+  await notify.sendTelegram(brain.getMorningBrief(state.day+1, state.niche||"researching...")).catch(()=>{});
+
+  if ((state.day+1) % 7 === 0 && state.day > 0) {
+    const { decisions } = brain.analyzeAndUpdateStrategy();
+    if (decisions.length > 0) {
+      ok("7-day strategy updated: " + decisions[0]);
+      await notify.sendTelegram(
+        `🧠 Weekly Strategy (Day ${state.day+1})\n━━━━━━━━━━━━━━\n` +
+        decisions.map(d=>"• "+d).join("\n")
+      ).catch(()=>{});
+    }
+  }
+
+  // ── NICHE ─────────────────────────────────────────────────────────────
   inf("Checking niche...");
+  if (brainReport.pivot_needed && state.day > 14) {
+    inf("Brain recommends pivot — 14 days low views");
+    await notify.sendTelegram("🔄 Auto-pivot triggered by brain").catch(()=>{});
+  }
+
   const currentNiche = await niche.initializeNiche();
   const nicheStatus  = niche.getNicheStatus();
-  const state        = loadState();
-  state.niche        = currentNiche;
+  state.niche = currentNiche;
 
   console.log(c("green",`
 ╔══════════════════════════════════════════════════════════════════╗
-║  🤖  AUTONOMOUS AGENT v6  —  100% Hands-Off                     ║
+║  🤖  AUTONOMOUS AGENT v7  —  Self-Healing Brain                 ║
 ║  Niche: ${currentNiche.slice(0,48).padEnd(48)}   ║
-║  Day ${String(state.day+1).padEnd(4)} │ Pivots: ${String(nicheStatus?.pivot_count||0).padEnd(3)} │ Affiliates: ${String(affiliate.getLinks().length).padEnd(2)} active    ║
+║  Day ${String(state.day+1).padEnd(4)} │ Pivots: ${String(nicheStatus?.pivot_count||0).padEnd(3)} │ Errors healed: ${String(healResult.fixes?.length||0).padEnd(2)}         ║
 ╚══════════════════════════════════════════════════════════════════╝`));
 
-  vault.auditLog("AGENT_STARTED",{ day:state.day+1, niche:currentNiche, version:6 });
+  vault.auditLog("AGENT_STARTED",{ day:state.day+1, niche:currentNiche, version:7 });
   await notify.notifyAgentStarted(state.day+1);
 
-  // GUMROAD PRODUCT
-  console.log(c("cyan","\n  🛍️  Gumroad product..."));
+  // ── PRODUCT ───────────────────────────────────────────────────────────
+  console.log(c("cyan","\n  🛍️  Product..."));
   try {
     const productUrl   = process.env.MANUAL_PRODUCT_URL  || null;
     const productName  = process.env.MANUAL_PRODUCT_NAME || "Credit Score Kickstart Kit";
     const productPrice = parseFloat(process.env.MANUAL_PRODUCT_PRICE || "7");
-    const product = { name: productName, price: productPrice, url: productUrl, status: "manual" };
-    state.product_url = product.url;
-    ok(`Product: "${product.name}" at $${product.price} — live at ${product.url || "no URL set"}`);
-  } catch(e) { wrn(`Gumroad: ${e.message}`); }
-
-  // REVENUE
-  console.log(c("cyan","\n  💳 Revenue check..."));
-  const { newSales, stats:revStats } = await revenue.runRevenueCheck();
-  let totalNew = 0;
-  for (const sale of newSales) {
-    totalNew += parseFloat(sale.price||0);
-    await notify.notifySale(sale);
+    state.product_url  = productUrl;
+    ok(`Product: "${productName}" at $${productPrice} — ${productUrl||"no URL set"}`);
+  } catch(e) {
+    heal.logError(e.message, "product_setup");
+    wrn(`Product: ${e.message}`);
   }
-  if (totalNew > 0) {
-    const { owner_cut, agent_cut, tier } = treasury.processRevenue(totalNew);
-    ok(`${newSales.length} sale(s) — gross $${totalNew.toFixed(2)}`);
-    await notify.sendTelegram(`💰 ${newSales.length} Sale(s)!\nTotal: $${totalNew.toFixed(2)}\nYour cut: $${owner_cut.toFixed(2)}\nTier: ${tier.label}`);
-  } else { inf("No new sales."); }
+
+  // ── REVENUE ───────────────────────────────────────────────────────────
+  console.log(c("cyan","\n  💳 Revenue check..."));
+  let newSales = [], revStats = {}, totalNew = 0;
+  try {
+    const rev = await revenue.runRevenueCheck();
+    newSales  = rev.newSales;
+    revStats  = rev.stats;
+    for (const sale of newSales) {
+      totalNew += parseFloat(sale.price||0);
+      await notify.notifySale(sale);
+    }
+    if (totalNew > 0) {
+      const { owner_cut, tier } = treasury.processRevenue(totalNew);
+      brain.recordSale(totalNew, currentNiche);
+      ok(`${newSales.length} sale(s) — $${totalNew.toFixed(2)}`);
+      await notify.sendTelegram(`💰 ${newSales.length} Sale(s)!\nTotal: $${totalNew.toFixed(2)}\nYour cut: $${owner_cut.toFixed(2)}`);
+      // Clear "no sales" flag if it was set
+      heal.clearFlag("elevenlabs_disabled");
+    } else {
+      inf("No new sales.");
+    }
+  } catch(e) {
+    heal.logError(e.message, "revenue_check");
+    wrn(`Revenue: ${e.message}`);
+  }
 
   treasury.payOperatingCosts();
 
-  const autoActivated = treasury.processUnlockQueue();
-  for (const mid of autoActivated) {
-    const mod = treasury.MODULES[mid];
-    ok(`Unlocked: ${mod.name}`);
-    await notify.sendTelegram(`Unlocked: ${mod.name}`);
-  }
-  for (const mod of treasury.checkUnlockEligibility()) {
-    if (treasury.loadUnlocks()[mod.id]?.status==="locked") {
-      treasury.initiateUnlock(mod.id);
-      await notify.sendTelegram(`Module Ready: ${mod.name} — auto-activates in 48hrs`);
-    }
-  }
-
-  // YOUTUBE
+  // ── YOUTUBE ───────────────────────────────────────────────────────────
   console.log(c("cyan","\n  📹 YouTube pipeline..."));
-  try {
-    const result = await youtube.run(currentNiche, state.product_url);
+  let videoAngle = "general", videoTitle = "", videoUrl = null;
 
-    // Debug: log full result so we can see exactly what came back
-    console.log("     → YouTube result: " + JSON.stringify({ status: result.status, uploadStatus: result.upload?.status, url: result.upload?.url }));
+  // Check if upload was paused by self-healer from a previous run
+  if (flags.youtube_upload_paused) {
+    wrn("YouTube upload paused by self-healer (quota exceeded) — building video only");
+    await notify.sendTelegram("⏸ YouTube upload still paused — quota issue from previous run. Check YouTube Studio.").catch(()=>{});
+  }
+
+  try {
+    const result = await youtube.run(currentNiche, state.product_url, stratBrief, flags);
+
+    console.log("     → YouTube result: " + JSON.stringify({
+      status: result.status,
+      uploadStatus: result.upload?.status,
+      url: result.upload?.url,
+    }));
 
     state.youtube_videos++;
+    videoTitle = result.title || "";
+    videoAngle = result.angle || "general";
     ok(`Script: "${result.title}"`);
 
-    // Check upload success - handle both result structures
-    const uploadUrl = result.upload?.url || (result.upload?.status === "success" ? result.upload.url : null);
     if (result.upload?.status === "success" && result.upload?.url) {
       state.videos_built++;
+      videoUrl = result.upload.url;
       ok(`Uploaded to YouTube: ${result.upload.url}`);
-      await notify.sendTelegram(`🎬 YouTube video LIVE!\n${result.title}\n${result.upload.url}`);
+      // Clear any youtube flags on success
+      heal.clearFlag("youtube_upload_paused");
+      heal.clearFlag("youtube_auth_needs_refresh");
+      await notify.sendTelegram(`🎬 Video LIVE!\n"${result.title}"\n${result.upload.url}\nAngle: ${videoAngle} | Day ${state.day+1}`);
     } else if (result.status === "complete") {
       state.videos_built++;
-      // Upload happened but result structure unexpected - still log it
-      ok(`Video complete — checking upload status...`);
+      ok(`Video built — upload pending`);
       if (result.upload) {
-        console.log("     → Upload detail: " + JSON.stringify(result.upload).slice(0,200));
+        const uploadErr = JSON.stringify(result.upload);
+        console.log("     → Upload detail: " + uploadErr.slice(0,200));
+        // Log upload failures for self-healer to analyze
+        if (result.upload.status === "error") {
+          heal.logError(result.upload.message || "upload failed", "youtube_upload", result.upload);
+        }
       }
-      await notify.sendTelegram(`🎬 Video processed: ${result.title}\nCheck YouTube Studio to confirm upload.`);
     } else if (result.status === "no_video") {
-      wrn(`Video build failed`);
+      heal.logError("video build returned no_video status", "youtube_build");
+      wrn("Video build failed");
     }
+
+    // Always record in brain
+    brain.recordVideo({ title:result.title||"", niche:currentNiche, angle:videoAngle, theme:result.theme||"deep-blue", url:videoUrl });
+
   } catch(e) {
+    heal.logError(e.message, "youtube_pipeline");
     wrn(`YouTube: ${e.message}`);
-    console.log("     → YouTube error stack: " + e.stack?.slice(0,300));
+    console.log("     → Stack: " + e.stack?.slice(0,200));
   }
 
-  // PRINTIFY
+  // ── PRINTIFY ──────────────────────────────────────────────────────────
   const unlocks = treasury.loadUnlocks();
-  if (unlocks.printify?.status==="active") {
-    const day = new Date().getDay();
-    if ([1,3,5].includes(day)) {
-      console.log(c("cyan","\n  🛒 Printify pipeline..."));
-      try {
-        const result = await printify.run(currentNiche);
-        state.printify_products += result.products?.length||0;
-        ok(`${result.products?.length||0} Etsy products`);
-      } catch(e) { wrn(`Printify: ${e.message}`); }
+  if (unlocks.printify?.status==="active" && [1,3,5].includes(new Date().getDay())) {
+    console.log(c("cyan","\n  🛒 Printify pipeline..."));
+    try {
+      const result = await printify.run(currentNiche);
+      state.printify_products += result.products?.length||0;
+      ok(`${result.products?.length||0} Etsy products`);
+    } catch(e) {
+      heal.logError(e.message, "printify");
+      wrn(`Printify: ${e.message}`);
     }
   }
 
-  // CONTENT + OUTREACH
+  // ── CONTENT ───────────────────────────────────────────────────────────
   console.log(c("cyan","\n  ✉️  Content & outreach..."));
   try {
     ["output/content","output/outreach","output/reports"]
@@ -163,19 +263,13 @@ async function main() {
 
     const affEmail = affiliate.formatForEmail(currentNiche);
     const affBlog  = affiliate.formatForBlog(currentNiche);
-    const prodLine = state.product_url
-      ? `Link to this resource: ${state.product_url}`
-      : "Mention a helpful digital guide.";
+    const prodLine = state.product_url ? `Link to this resource: ${state.product_url}` : "Mention a helpful digital guide.";
 
     const [blogRes, emailRes] = await Promise.all([
-      client.messages.create({
-        model:config.anthropic.model, max_tokens:1500,
-        messages:[{ role:"user", content:`Write a 300-word SEO blog post about "${currentNiche}". Title, 3 actionable tips, genuinely useful. ${prodLine}${affBlog}` }]
-      }),
-      client.messages.create({
-        model:config.anthropic.model, max_tokens:1000,
-        messages:[{ role:"user", content:`Write 5 cold outreach emails for "${currentNiche}" targeting small business owners. Each: subject + under 80 words. Casual, human. ${prodLine}${affEmail}` }]
-      }),
+      client.messages.create({ model:config.anthropic.model, max_tokens:1500,
+        messages:[{ role:"user", content:`Write a 300-word SEO blog post about "${currentNiche}". Title, 3 actionable tips. ${prodLine}${affBlog}` }] }),
+      client.messages.create({ model:config.anthropic.model, max_tokens:1000,
+        messages:[{ role:"user", content:`Write 5 cold outreach emails for "${currentNiche}" targeting small business owners. Each: subject + under 80 words. ${prodLine}${affEmail}` }] }),
     ]);
 
     fs.writeFileSync(path.join(process.cwd(),"output/content",`day-${state.day+1}.md`), blogRes.content[0].text);
@@ -183,51 +277,78 @@ async function main() {
     state.emails_total  += 20;
     state.content_total += 1;
     ok("Blog post + 20 emails done");
-  } catch(e) { wrn(`Content: ${e.message}`); }
+  } catch(e) {
+    heal.logError(e.message, "content_generation");
+    wrn(`Content: ${e.message}`);
+  }
 
-  // SAVE + REPORT
+  // ── LOG DAY ───────────────────────────────────────────────────────────
+  brain.logDay({ day_number:state.day+1, niche:currentNiche, video_title:videoTitle, angle:videoAngle, sales:newSales.length, revenue:totalNew, notes:videoUrl?`Live: ${videoUrl}`:"Upload pending" });
+
+  // ── RUN HEAL CYCLE AGAIN AT END OF DAY ───────────────────────────────
+  // Any errors from TODAY get analyzed and fixes queued for tomorrow
+  const endOfDayHeal = await heal.runHealCycle(
+    config.anthropic.api_key,
+    config.anthropic.model,
+    notify.sendTelegram.bind(notify)
+  );
+  if (endOfDayHeal.healed) {
+    ok(`End-of-day self-heal: ${endOfDayHeal.fixes.length} fix(es) queued for tomorrow`);
+  }
+
+  // ── SAVE + REPORT ─────────────────────────────────────────────────────
   state.day++;
   saveState(state);
 
-  const fin      = treasury.getStatus();
-  const ytStats  = youtube.getGrowthStatus();
-  const podStats = printify.getStats();
-  const gmStats  = gumroad.getStats();
-  const affStats = affiliate.getSummary();
+  const fin        = treasury.getStatus();
+  const ytStats    = youtube.getGrowthStatus();
+  const affStats   = affiliate.getSummary();
+  const brainFinal = brain.getReport();
+  const healReport = heal.getReport();
 
   await notify.sendDailyReport({
-    day:               state.day,
-    date:              new Date().toLocaleDateString("en-US",{timeZone:config.owner.timezone}),
-    revenue_today:     revStats.today||0,
-    revenue_total:     revStats.total||0,
-    emails_sent:       state.emails_total,
-    content_published: state.content_total,
-    sales_count:       revStats.count||0,
-    phase:             fin.tier?.label||"Starter",
+    day: state.day,
+    date: new Date().toLocaleDateString("en-US",{timeZone:config.owner.timezone}),
+    revenue_today: revStats.today||0, revenue_total: revStats.total||0,
+    emails_sent: state.emails_total, content_published: state.content_total,
+    sales_count: revStats.count||0, phase: fin.tier?.label||"Starter",
     actions:[
-      `Niche: "${currentNiche}" (day ${nicheStatus?.days_active||0})`,
-      `Product: "Credit Score Kickstart Kit" at $7 — ${state.product_url || "no URL"}`,
-      `Affiliates: ${affStats.active_programs} programs active — ${affStats.estimated_monthly}`,
-      `YouTube: ${ytStats.videos_created} scripts | ${state.videos_built} videos built`,
-      `Etsy: ${podStats.products_created} products`,
-      `Emails sent: ${state.emails_total}`,
-      `Your total earned: $${(fin.owner_total_earned||0).toFixed(2)} (${fin.tier?.owner||60}% split)`,
-      fin.next_unlock?.message||"All modules active",
+      `Niche: "${currentNiche}"`,
+      `YouTube: ${ytStats.videos_created} videos | Best angle: ${brainFinal.best_angle||"learning..."}`,
+      `Brain: ${brainFinal.total_videos} tracked | $${brainFinal.total_revenue.toFixed(2)} revenue`,
+      `Self-Heal: ${healReport.total_errors} errors caught | ${healReport.active_flags.length} active fixes`,
+      `Earned: $${(fin.owner_total_earned||0).toFixed(2)}`,
     ],
     alerts: vault.getAlerts(24),
     next_steps:[
-      fin.next_unlock?.message||"All modules unlocked",
-      nicheStatus?.pivot_count>0 ? `Pivoted ${nicheStatus.pivot_count}x — optimized` : "Original niche holding",
+      brainFinal.focus_angle ? `Tomorrow: "${brainFinal.focus_angle}" angle` : "Need 7 videos for strategy",
+      healReport.active_flags.length > 0 ? `Active fixes: ${healReport.active_flags.join(", ")}` : "All systems healthy",
     ],
   });
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow\n`));
-  console.log(`  Niche:      ${c("cyan",currentNiche)}\n  Product:    ${c("green","Credit Score Kickstart Kit")} @ $7\n  URL:        ${state.product_url||"not set"}\n  Earned:     ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n  Affiliates: ${affStats.active_programs} active\n  Videos:     ${state.videos_built} built\n`);
+  console.log(
+    `  Niche:      ${c("cyan",currentNiche)}\n` +
+    `  Revenue:    ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n` +
+    `  Videos:     ${state.videos_built} uploaded\n` +
+    `  Brain:      ${brainFinal.total_videos} tracked | ${brainFinal.best_angle||"learning"} winning\n` +
+    `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n`
+  );
 }
 
-main().catch(async err => {
-  vault.auditLog("AGENT_CRASH",{ error:err.message },"alert");
-  await notify.sendTelegram(`Agent crashed: ${err.message.slice(0,300)}\nRetries tomorrow 8am.`).catch(()=>{});
-  console.error(c("red",`\n❌ ${err.message}\n`));
-  process.exit(1);
-});
+// ── ENTRY POINT ───────────────────────────────────────────────────────────────
+const args = process.argv.slice(2);
+if (args[0] === "--heartbeat") {
+  heartbeat().catch(e => {
+    heal.logError(e.message, "heartbeat_crash");
+    console.log("[Heartbeat] fatal: " + e.message);
+  });
+} else {
+  main().catch(async err => {
+    heal.logError(err.message, "agent_crash");
+    vault.auditLog("AGENT_CRASH",{ error:err.message },"alert");
+    await notify.sendTelegram(`❌ Agent crashed: ${err.message.slice(0,300)}\nSelf-healer will analyze before next run.`).catch(()=>{});
+    console.error(c("red",`\n❌ ${err.message}\n`));
+    process.exit(1);
+  });
+}
