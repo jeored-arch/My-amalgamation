@@ -247,15 +247,84 @@ function generateMusic(ffmpegPath, durationSecs, outputPath) {
 
 // ── ELEVENLABS VOICEOVER ──────────────────────────────────────────────────────
 
+// Split text into chunks under 4800 chars at sentence boundaries
+function splitIntoChunks(text, maxChars) {
+  if (text.length <= maxChars) return [text];
+  var chunks = [];
+  var sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  var current = "";
+  for (var i = 0; i < sentences.length; i++) {
+    if ((current + sentences[i]).length > maxChars && current.length > 0) {
+      chunks.push(current.trim());
+      current = sentences[i];
+    } else {
+      current += sentences[i];
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+// Call ElevenLabs for a single chunk
+function elevenLabsChunk(text, apiKey, voiceId) {
+  var body = JSON.stringify({ text: text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
+  return new Promise(function(resolve) {
+    var req = https.request({
+      hostname: "api.elevenlabs.io", path: "/v1/text-to-speech/" + voiceId, method: "POST",
+      headers: { "xi-api-key": apiKey, "Content-Type": "application/json", "Accept": "audio/mpeg", "Content-Length": Buffer.byteLength(body) },
+    }, function(res) {
+      if (res.statusCode !== 200) {
+        var errBody = "";
+        res.on("data", function(d) { errBody += d; });
+        res.on("end", function() {
+          console.log("     → ElevenLabs HTTP " + res.statusCode + " | " + errBody.slice(0, 120));
+          resolve(null);
+        });
+        return;
+      }
+      var chunks = [];
+      res.on("data", function(d) { chunks.push(d); });
+      res.on("end", function() { resolve(Buffer.concat(chunks)); });
+    });
+    req.on("error", function(e) { console.log("     → ElevenLabs error: " + e.message); resolve(null); });
+    req.write(body); req.end();
+  });
+}
+
 function generateVoiceover(text, outputPath) {
   var apiKey  = process.env.ELEVENLABS_API_KEY || (config.elevenlabs && config.elevenlabs.api_key) || "";
   var voiceId = (config.elevenlabs && config.elevenlabs.voice_id) || "21m00Tcm4TlvDq8ikWAM";
   apiKey = apiKey.trim();
   if (!apiKey || apiKey.length < 10) { console.log("     → No ElevenLabs key"); return Promise.resolve(null); }
   console.log("     → ElevenLabs key: " + apiKey.slice(0,8) + "... (" + apiKey.length + " chars)");
-  console.log("     → Generating voiceover...");
-  // Use turbo model - works with both sk_ and legacy hex key formats
-  var body = JSON.stringify({ text: text.slice(0,2500), model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
+
+  // Split full script into chunks — paid plan allows 5000 chars per call
+  var chunks = splitIntoChunks(text, 4800);
+  console.log("     → Voiceover: " + text.length + " chars split into " + chunks.length + " chunk(s)");
+
+  // Process all chunks sequentially, then concatenate audio buffers
+  var promise = Promise.resolve([]);
+  chunks.forEach(function(chunk, i) {
+    promise = promise.then(function(buffers) {
+      console.log("     → Chunk " + (i+1) + "/" + chunks.length + " (" + chunk.length + " chars)...");
+      return elevenLabsChunk(chunk, apiKey, voiceId).then(function(buf) {
+        if (buf) buffers.push(buf);
+        return buffers;
+      });
+    });
+  });
+
+  return promise.then(function(buffers) {
+    if (buffers.length === 0) { console.log("     → No audio generated"); return null; }
+    var combined = Buffer.concat(buffers);
+    fs.writeFileSync(outputPath, combined);
+    var durationEst = Math.round(combined.length / 16000); // rough estimate
+    console.log("     ✓ Voiceover generated (" + (combined.length/1024).toFixed(0) + "KB, ~" + durationEst + "s)");
+    return outputPath;
+  });
+
+  // Legacy single-call path kept below for reference — no longer used
+  var body = JSON.stringify({ text: text.slice(0,4800), model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
   return new Promise(function(resolve) {
     var req = https.request({
       hostname: "api.elevenlabs.io", path: "/v1/text-to-speech/" + voiceId, method: "POST",
@@ -318,41 +387,82 @@ function buildVideo(title, scriptText, outputPath, theme) {
     var music     = generateMusic(ffmpegPath, totalSecs, musicPath);
     var voicePath = path.join(tmpDir, "voice.mp3");
 
-    return generateVoiceover(scriptText.slice(0,2500), voicePath).then(function(voiceFile) {
+    // Send FULL script to ElevenLabs — chunked automatically for paid plans
+    // At ~15 chars/sec speech rate, 7000 chars = ~7.5 min, matching the ~10 min video
+    console.log("     → Voiceover: " + scriptText.length + " chars (~" + Math.round(scriptText.length/15) + "s speech)");
+    return generateVoiceover(scriptText, voicePath).then(function(voiceFile) {
       var mixed = false;
 
-      // Try voice + music (simple amix, no apad)
+      // ── AUDIO STRATEGY ─────────────────────────────────────────────────
+      // Goal: voice + music covering the ENTIRE video length, no cutoffs.
+      // - Voice is padded with silence at end if shorter than video (apad)
+      // - Music loops to fill full video duration
+      // - Both trimmed to exact video length with -t flag
+      // - Fallback chain: voice+music → voice only → music only → silent
+
+      var videoLen = totalSecs; // exact video duration in seconds
+      console.log("     → Video length: " + videoLen + "s | mixing audio to match...");
+
+      // Try voice + music — both stretched to cover full video
       if (voiceFile && music) {
-        console.log("     → Mixing voice + music...");
+        console.log("     → Mixing voice + music (full duration)...");
         try {
-          exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + voiceFile + "\" -i \"" + music + "\" " +
-            "-filter_complex \"[1:a]volume=1.8[v];[2:a]volume=0.05[m];[v][m]amix=inputs=2:duration=shortest[out]\" " +
-            "-map 0:v -map \"[out]\" -c:v copy -c:a aac -b:a 128k \"" + outputPath + "\"",
+          // [1:a] = voice: pad with silence to video length
+          // [2:a] = music: loop and trim to video length  
+          // amix duration=longest so music fills any gap after voice ends
+          exec("\"" + ffmpegPath + "\" -y " +
+            "-i \"" + videoPath + "\" " +
+            "-i \"" + voiceFile + "\" " +
+            "-stream_loop -1 -i \"" + music + "\" " +
+            "-filter_complex " +
+            "\"[1:a]apad=whole_dur=" + videoLen + "[vpad];" +
+            "[2:a]atrim=0:" + videoLen + ",volume=0.08[mloop];" +
+            "[vpad]volume=1.6[vvol];" +
+            "[vvol][mloop]amix=inputs=2:duration=longest[out]\" " +
+            "-map 0:v -map \"[out]\" " +
+            "-c:v copy -c:a aac -b:a 128k -t " + videoLen + " \"" + outputPath + "\"",
             { stdio: "pipe", timeout: 300000 });
-          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) mixed = true;
-        } catch(e) { console.log("     → Voice+music mix err: " + e.message.slice(0,80)); }
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
+            mixed = true;
+            console.log("     ✓ Voice + music mixed (" + videoLen + "s)");
+          }
+        } catch(e) { console.log("     → Voice+music mix err: " + e.message.slice(0,120)); }
       }
 
-      // Voice only fallback
+      // Voice only — padded to full video length
       if (!mixed && voiceFile) {
-        console.log("     → Adding voiceover only...");
+        console.log("     → Adding voiceover (full duration)...");
         try {
-          exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + voiceFile + "\" " +
-            "-map 0:v -map 1:a -c:v copy -c:a aac -b:a 128k -shortest \"" + outputPath + "\"",
+          exec("\"" + ffmpegPath + "\" -y " +
+            "-i \"" + videoPath + "\" " +
+            "-i \"" + voiceFile + "\" " +
+            "-filter_complex \"[1:a]apad=whole_dur=" + videoLen + ",volume=1.6[out]\" " +
+            "-map 0:v -map \"[out]\" " +
+            "-c:v copy -c:a aac -b:a 128k -t " + videoLen + " \"" + outputPath + "\"",
             { stdio: "pipe", timeout: 300000 });
-          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) mixed = true;
-        } catch(e) { console.log("     → Voice-only err: " + e.message.slice(0,80)); }
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
+            mixed = true;
+            console.log("     ✓ Voice only mixed (" + videoLen + "s)");
+          }
+        } catch(e) { console.log("     → Voice-only err: " + e.message.slice(0,120)); }
       }
 
-      // Music only fallback
+      // Music only — looped to full video length
       if (!mixed && music) {
-        console.log("     → Adding music only...");
+        console.log("     → Adding music only (full duration)...");
         try {
-          exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + music + "\" " +
-            "-map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + outputPath + "\"",
+          exec("\"" + ffmpegPath + "\" -y " +
+            "-stream_loop -1 -i \"" + videoPath + "\" " +
+            "-stream_loop -1 -i \"" + music + "\" " +
+            "-filter_complex \"[1:a]atrim=0:" + videoLen + ",volume=0.3[out]\" " +
+            "-map 0:v -map \"[out]\" " +
+            "-c:v copy -c:a aac -t " + videoLen + " \"" + outputPath + "\"",
             { stdio: "pipe", timeout: 300000 });
-          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) mixed = true;
-        } catch(e) { console.log("     → Music-only err: " + e.message.slice(0,80)); }
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
+            mixed = true;
+            console.log("     ✓ Music only mixed (" + videoLen + "s)");
+          }
+        } catch(e) { console.log("     → Music-only err: " + e.message.slice(0,120)); }
       }
 
       // Silent fallback
@@ -516,16 +626,30 @@ function researchTopics(niche, usedTopics) {
 
 function generateScript(topic, niche, product_url) {
   return client.messages.create({
-    model: config.anthropic.model, max_tokens: 2500,
-    system: "You are an expert YouTube scriptwriter. Your scripts get 70%+ retention because of powerful hooks, curiosity gaps, and clear value delivery.",
+    model: config.anthropic.model, max_tokens: 4000,
+    system: "You are an expert YouTube scriptwriter. Your scripts get 70%+ retention because of powerful hooks, curiosity gaps, and clear value delivery. ALWAYS write full spoken narration — never use bullet points in the script body.",
     messages: [{ role: "user", content:
-      "Write a YouTube script for: \"" + topic.title + "\"\n" +
+      "Write a FULL 10-minute YouTube narration script for: \"" + topic.title + "\"\n" +
       "Niche: " + niche + "\n" +
       "Opening hook: \"" + (topic.hook || "What I am about to show you changes everything") + "\"\n" +
-      "Product to mention once naturally: " + (product_url || "none") + "\n\n" +
-      "STRUCTURE — use ## for each header:\n" +
-      "## HOOK (0:00-0:30)\n## INTRO (0:30-1:30)\n## 1. [First Point]\n## 2. [Second Point]\n## 3. [Third Point]\n## 4. [Fourth Point]\n## 5. [Fifth Point]\n## KEY TAKEAWAY\n## CTA\n\n" +
-      "Rules: conversational tone, specific examples, no fluff, ~1200 words total."
+      "Product to mention once naturally mid-video: " + (product_url || "none") + "\n\n" +
+      "CRITICAL REQUIREMENTS:\n" +
+      "- Target: 1400-1600 words of SPOKEN narration (10 min at 150 words/min)\n" +
+      "- Write every word as it will be SPOKEN aloud — no bullet points, no headers visible to viewer\n" +
+      "- Use ## only as section markers for the editor\n" +
+      "- Each section must have 2-4 full paragraphs of spoken content\n" +
+      "- Be conversational, specific, and story-driven\n\n" +
+      "STRUCTURE — use ## for each section header:\n" +
+      "## HOOK (0:00-0:45) — 2 paragraphs, pattern interrupt opening\n" +
+      "## INTRO (0:45-2:00) — 2 paragraphs, set up the problem\n" +
+      "## 1. [First Point] (2:00-3:30) — 3 paragraphs with example\n" +
+      "## 2. [Second Point] (3:30-5:00) — 3 paragraphs with example\n" +
+      "## 3. [Third Point] (5:00-6:30) — 3 paragraphs with example\n" +
+      "## 4. [Fourth Point] (6:30-7:30) — 2 paragraphs\n" +
+      "## 5. [Fifth Point] (7:30-8:30) — 2 paragraphs\n" +
+      "## KEY TAKEAWAY (8:30-9:30) — 2 paragraphs summarizing\n" +
+      "## CTA (9:30-10:00) — subscribe + product mention if applicable\n\n" +
+      "Write the complete script now. Do not summarize or cut short."
     }],
   }).then(function(res){ return res.content[0].text; });
 }
