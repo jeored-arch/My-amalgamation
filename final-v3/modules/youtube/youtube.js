@@ -319,23 +319,47 @@ function buildVideo(title, scriptText, outputPath, theme) {
     var voicePath = path.join(tmpDir, "voice.mp3");
 
     return generateVoiceover(scriptText.slice(0,2500), voicePath).then(function(voiceFile) {
-      var mixCmd;
+      var mixed = false;
+
+      // Try voice + music (simple amix, no apad)
       if (voiceFile && music) {
         console.log("     → Mixing voice + music...");
-        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + voiceFile + "\" -i \"" + music + "\" -filter_complex \"[1:a]volume=1.0,apad[v];[2:a]volume=0.05[m];[v][m]amix=inputs=2:duration=first[out]\" -map 0:v -map \"[out]\" -c:v copy -c:a aac -shortest \"" + outputPath + "\"";
-      } else if (voiceFile) {
-        console.log("     → Adding voiceover...");
-        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + voiceFile + "\" -map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + outputPath + "\"";
-      } else if (music) {
-        console.log("     → Adding ambient music...");
-        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + music + "\" -map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + outputPath + "\"";
-      } else {
-        mixCmd = "\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -c copy \"" + outputPath + "\"";
+        try {
+          exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + voiceFile + "\" -i \"" + music + "\" " +
+            "-filter_complex \"[1:a]volume=1.8[v];[2:a]volume=0.05[m];[v][m]amix=inputs=2:duration=shortest[out]\" " +
+            "-map 0:v -map \"[out]\" -c:v copy -c:a aac -b:a 128k \"" + outputPath + "\"",
+            { stdio: "pipe", timeout: 300000 });
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) mixed = true;
+        } catch(e) { console.log("     → Voice+music mix err: " + e.message.slice(0,80)); }
       }
-      try { exec(mixCmd, { stdio: "pipe", timeout: 300000 }); }
-      catch(e) {
-        console.log("     → Mix failed, saving silent");
-        try { exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" }); } catch(e2) { return { status: "final_error" }; }
+
+      // Voice only fallback
+      if (!mixed && voiceFile) {
+        console.log("     → Adding voiceover only...");
+        try {
+          exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + voiceFile + "\" " +
+            "-map 0:v -map 1:a -c:v copy -c:a aac -b:a 128k -shortest \"" + outputPath + "\"",
+            { stdio: "pipe", timeout: 300000 });
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) mixed = true;
+        } catch(e) { console.log("     → Voice-only err: " + e.message.slice(0,80)); }
+      }
+
+      // Music only fallback
+      if (!mixed && music) {
+        console.log("     → Adding music only...");
+        try {
+          exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -i \"" + music + "\" " +
+            "-map 0:v -map 1:a -c:v copy -c:a aac -shortest \"" + outputPath + "\"",
+            { stdio: "pipe", timeout: 300000 });
+          if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) mixed = true;
+        } catch(e) { console.log("     → Music-only err: " + e.message.slice(0,80)); }
+      }
+
+      // Silent fallback
+      if (!mixed) {
+        console.log("     → Saving silent video");
+        try { exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" }); }
+        catch(e2) { return { status: "final_error" }; }
       }
       if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 10000) return { status: "output_missing" };
       var sizeMb = (fs.statSync(outputPath).size/1024/1024).toFixed(1);
@@ -373,8 +397,13 @@ function uploadThumbnail(videoId, thumbnailPath, accessToken) {
     }, function(res) {
       var body = ""; res.on("data", function(d){ body += d; });
       res.on("end", function(){
-        if (res.statusCode === 200) { console.log("     ✓ Custom thumbnail uploaded"); resolve(true); }
-        else { console.log("     → Thumbnail upload HTTP " + res.statusCode); resolve(false); }
+        if (res.statusCode === 200 || res.statusCode === 204) {
+          console.log("     ✓ Custom thumbnail uploaded");
+          resolve(true);
+        } else {
+          console.log("     → Thumbnail HTTP " + res.statusCode + " | " + body.slice(0,120));
+          resolve(false);
+        }
       });
     });
     req.on("error", function(){ resolve(false); });
