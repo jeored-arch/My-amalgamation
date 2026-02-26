@@ -52,7 +52,6 @@ async function main() {
     return;
   }
 
-  // ── NICHE ─────────────────────────────────────────────────────────────────
   inf("Checking niche...");
   const currentNiche = await niche.initializeNiche();
   const nicheStatus  = niche.getNicheStatus();
@@ -69,7 +68,7 @@ async function main() {
   vault.auditLog("AGENT_STARTED",{ day:state.day+1, niche:currentNiche, version:6 });
   await notify.notifyAgentStarted(state.day+1);
 
-  // ── GUMROAD PRODUCT ───────────────────────────────────────────────────────
+  // GUMROAD PRODUCT
   console.log(c("cyan","\n  🛍️  Gumroad product..."));
   try {
     const productUrl   = process.env.MANUAL_PRODUCT_URL  || null;
@@ -80,7 +79,7 @@ async function main() {
     ok(`Product: "${product.name}" at $${product.price} — live at ${product.url || "no URL set"}`);
   } catch(e) { wrn(`Gumroad: ${e.message}`); }
 
-  // ── REVENUE ───────────────────────────────────────────────────────────────
+  // REVENUE
   console.log(c("cyan","\n  💳 Revenue check..."));
   const { newSales, stats:revStats } = await revenue.runRevenueCheck();
   let totalNew = 0;
@@ -96,7 +95,6 @@ async function main() {
 
   treasury.payOperatingCosts();
 
-  // ── UNLOCKS ───────────────────────────────────────────────────────────────
   const autoActivated = treasury.processUnlockQueue();
   for (const mid of autoActivated) {
     const mod = treasury.MODULES[mid];
@@ -110,23 +108,40 @@ async function main() {
     }
   }
 
-  // ── YOUTUBE ───────────────────────────────────────────────────────────────
+  // YOUTUBE
   console.log(c("cyan","\n  📹 YouTube pipeline..."));
   try {
     const result = await youtube.run(currentNiche, state.product_url);
+
+    // Debug: log full result so we can see exactly what came back
+    console.log("     → YouTube result: " + JSON.stringify({ status: result.status, uploadStatus: result.upload?.status, url: result.upload?.url }));
+
     state.youtube_videos++;
     ok(`Script: "${result.title}"`);
-    if (result.upload && result.upload.status === "success") {
+
+    // Check upload success - handle both result structures
+    const uploadUrl = result.upload?.url || (result.upload?.status === "success" ? result.upload.url : null);
+    if (result.upload?.status === "success" && result.upload?.url) {
       state.videos_built++;
       ok(`Uploaded to YouTube: ${result.upload.url}`);
-      await notify.sendTelegram(`YouTube video live!\n${result.title}\n${result.upload.url}`);
+      await notify.sendTelegram(`🎬 YouTube video LIVE!\n${result.title}\n${result.upload.url}`);
     } else if (result.status === "complete") {
       state.videos_built++;
-      ok(`Video built and processed`);
+      // Upload happened but result structure unexpected - still log it
+      ok(`Video complete — checking upload status...`);
+      if (result.upload) {
+        console.log("     → Upload detail: " + JSON.stringify(result.upload).slice(0,200));
+      }
+      await notify.sendTelegram(`🎬 Video processed: ${result.title}\nCheck YouTube Studio to confirm upload.`);
+    } else if (result.status === "no_video") {
+      wrn(`Video build failed`);
     }
-  } catch(e) { wrn(`YouTube: ${e.message}`); }
+  } catch(e) {
+    wrn(`YouTube: ${e.message}`);
+    console.log("     → YouTube error stack: " + e.stack?.slice(0,300));
+  }
 
-  // ── PRINTIFY ──────────────────────────────────────────────────────────────
+  // PRINTIFY
   const unlocks = treasury.loadUnlocks();
   if (unlocks.printify?.status==="active") {
     const day = new Date().getDay();
@@ -140,7 +155,7 @@ async function main() {
     }
   }
 
-  // ── CONTENT + OUTREACH ────────────────────────────────────────────────────
+  // CONTENT + OUTREACH
   console.log(c("cyan","\n  ✉️  Content & outreach..."));
   try {
     ["output/content","output/outreach","output/reports"]
@@ -170,7 +185,7 @@ async function main() {
     ok("Blog post + 20 emails done");
   } catch(e) { wrn(`Content: ${e.message}`); }
 
-  // ── SAVE + REPORT ─────────────────────────────────────────────────────────
+  // SAVE + REPORT
   state.day++;
   saveState(state);
 
