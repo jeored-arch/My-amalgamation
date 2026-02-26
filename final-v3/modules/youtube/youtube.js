@@ -250,15 +250,26 @@ function generateMusic(ffmpegPath, durationSecs, outputPath) {
 function generateVoiceover(text, outputPath) {
   var apiKey  = process.env.ELEVENLABS_API_KEY || (config.elevenlabs && config.elevenlabs.api_key) || "";
   var voiceId = (config.elevenlabs && config.elevenlabs.voice_id) || "21m00Tcm4TlvDq8ikWAM";
+  apiKey = apiKey.trim();
   if (!apiKey || apiKey.length < 10) { console.log("     → No ElevenLabs key"); return Promise.resolve(null); }
+  console.log("     → ElevenLabs key: " + apiKey.slice(0,8) + "... (" + apiKey.length + " chars)");
   console.log("     → Generating voiceover...");
+  // Use turbo model - works with both sk_ and legacy hex key formats
   var body = JSON.stringify({ text: text.slice(0,2500), model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
   return new Promise(function(resolve) {
     var req = https.request({
       hostname: "api.elevenlabs.io", path: "/v1/text-to-speech/" + voiceId, method: "POST",
       headers: { "xi-api-key": apiKey, "Content-Type": "application/json", "Accept": "audio/mpeg", "Content-Length": Buffer.byteLength(body) },
     }, function(res) {
-      if (res.statusCode !== 200) { console.log("     → ElevenLabs HTTP " + res.statusCode); res.resume(); return resolve(null); }
+      if (res.statusCode !== 200) {
+        var errBody = "";
+        res.on("data", function(d) { errBody += d; });
+        res.on("end", function() {
+          console.log("     → ElevenLabs HTTP " + res.statusCode + " | " + errBody.slice(0, 120));
+          resolve(null);
+        });
+        return;
+      }
       var file = fs.createWriteStream(outputPath);
       res.pipe(file);
       file.on("finish", function() { file.close(); console.log("     ✓ Voiceover generated"); resolve(outputPath); });
