@@ -197,29 +197,43 @@ function generatePDF(content, outputPath) {
 
 // ── STEP 4: PUBLISH TO GUMROAD ────────────────────────────────────────────────
 
-function gumroadPost(endpoint, body, apiKey) {
+function gumroadPost(endpoint, bodyStr, apiKey) {
   return new Promise(function(resolve) {
-    const full = body + "&access_token=" + encodeURIComponent(apiKey);
-    const req  = https.request({
+    const req = https.request({
       hostname: "api.gumroad.com", path: endpoint, method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "Content-Length": Buffer.byteLength(full) },
+      headers: {
+        "Authorization": "Bearer " + apiKey,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(bodyStr),
+      },
     }, function(res) {
-      var d = ""; res.on("data", function(c){d+=c;}); res.on("end", function(){ try{resolve(JSON.parse(d));}catch(e){resolve(null);} });
+      var d = "";
+      res.on("data", function(c){ d += c; });
+      res.on("end", function() {
+        console.log("     → Gumroad HTTP " + res.statusCode + " | " + d.slice(0,150));
+        try { resolve(JSON.parse(d)); } catch(e) { resolve(null); }
+      });
     });
-    req.on("error", function(){ resolve(null); }); req.write(full); req.end();
+    req.on("error", function(e){ console.log("     → Gumroad network error: " + e.message); resolve(null); });
+    req.write(bodyStr); req.end();
   });
 }
 
 async function publishGumroad(content, pdfPath, price, apiKey) {
-  console.log("     → Publishing to Gumroad...");
-  const res = await gumroadPost("/v2/products", new URLSearchParams({
-    name:        content.name,
-    description: content.description || content.tagline,
+  console.log("     → Publishing to Gumroad (Bearer auth)...");
+  console.log("     → Key prefix: " + apiKey.slice(0,8) + "... (" + apiKey.length + " chars)");
+  const bodyStr = new URLSearchParams({
+    name:        (content.name || "Digital Guide").slice(0,80),
+    description: (content.description || content.tagline || "A helpful digital guide").slice(0,500),
     price:       String(Math.round(price * 100)),
     published:   "true",
-  }).toString(), apiKey);
+  }).toString();
+  const res = await gumroadPost("/v2/products", bodyStr, apiKey);
 
-  if (!res || !res.product) { console.log("     → Gumroad publish failed"); return null; }
+  if (!res || !res.success || !res.product) {
+    console.log("     → Gumroad publish failed: " + JSON.stringify(res).slice(0,200));
+    return null;
+  }
   const id = res.product.id;
 
   // Upload PDF file
@@ -227,18 +241,22 @@ async function publishGumroad(content, pdfPath, price, apiKey) {
     const fileData = fs.readFileSync(pdfPath);
     const boundary = "Boundary" + Date.now();
     const header   = Buffer.from("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + path.basename(pdfPath) + "\"\r\nContent-Type: application/pdf\r\n\r\n");
-    const footer   = Buffer.from("\r\n--" + boundary + "\r\nContent-Disposition: form-data; name=\"access_token\"\r\n\r\n" + apiKey + "\r\n--" + boundary + "--\r\n");
+    const footer   = Buffer.from("\r\n--" + boundary + "--\r\n");
     const body     = Buffer.concat([header, fileData, footer]);
     await new Promise(function(resolve) {
       const req = https.request({
         hostname: "api.gumroad.com", path: "/v2/products/" + id + "/files", method: "POST",
-        headers: { "Content-Type": "multipart/form-data; boundary=" + boundary, "Content-Length": body.length },
+        headers: {
+          "Authorization": "Bearer " + apiKey,
+          "Content-Type": "multipart/form-data; boundary=" + boundary,
+          "Content-Length": body.length,
+        },
       }, function(r) { r.resume(); r.on("end", function(){ console.log("     → File upload HTTP " + r.statusCode); resolve(); }); });
       req.on("error", function(){ resolve(); }); req.write(body); req.end();
     });
   }
 
-  const url = "https://gum.co/" + (res.product.short_url || id);
+  const url = res.product.short_url || res.product.url || ("https://gumroad.com/l/" + id);
   console.log("     ✓ Live: " + url + " at $" + price);
   return { id, url, name: content.name, price };
 }
