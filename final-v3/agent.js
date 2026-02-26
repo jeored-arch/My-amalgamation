@@ -17,7 +17,6 @@ const gumroad   = require("./modules/gumroad/gumroad-products");
 const affiliate = require("./modules/affiliate/affiliate");
 const brain     = require("./core/brain");
 const heal      = require("./core/self-healing");
-const products  = require("./modules/products/product-engine");
 const products  = require("./core/product-engine");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
