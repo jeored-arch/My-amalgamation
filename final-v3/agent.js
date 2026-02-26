@@ -242,29 +242,6 @@ async function main() {
     console.log("     → Stack: " + e.stack?.slice(0,200));
   }
 
-  // ── PRODUCT ENGINE ────────────────────────────────────────────────────
-  // Runs every day — researches market, creates & publishes best products
-  console.log(c("cyan","\n  🏭 Product creation..."));
-  try {
-    const brainForProducts = {
-      sold:    brain.load().daily_logs.filter(l => l.sales > 0).map(l => l.video_title).slice(-10),
-      flopped: brain.load().knowledge?.failed_topics?.slice(-10) || [],
-    };
-    const prodResult = await products.run(currentNiche, config, brainForProducts, notify.sendTelegram.bind(notify));
-    if (prodResult.products && prodResult.products.length > 0) {
-      for (const p of prodResult.products) {
-        ok(`Product: "${p.name}" @ $${p.price}${p.url ? " — " + p.url : " (saved locally)"}`);
-        // Use first live product URL as the promotion URL
-        if (p.url && !state.product_url) state.product_url = p.url;
-      }
-    } else if (prodResult.status === "skipped") {
-      inf("Products: daily limit reached");
-    }
-  } catch(e) {
-    heal.logError(e.message, "product_engine");
-    wrn(`Products: ${e.message}`);
-  }
-
   // ── PRODUCTS ──────────────────────────────────────────────────────────
   console.log(c("cyan","\n  🏭 Product creation..."));
   try {
