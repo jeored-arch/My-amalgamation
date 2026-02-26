@@ -361,6 +361,7 @@ async function main() {
   const affStats   = affiliate.getSummary();
   const brainFinal = brain.getReport();
   const healReport = heal.getReport();
+    const prodStats  = products.getStats();
 
   await notify.sendDailyReport({
     day: state.day,
@@ -372,7 +373,7 @@ async function main() {
       `Niche: "${currentNiche}"`,
       `YouTube: ${ytStats.videos_created} videos | Best angle: ${brainFinal.best_angle||"learning..."}`,
       `Brain: ${brainFinal.total_videos} tracked | $${brainFinal.total_revenue.toFixed(2)} revenue`,
-      `Products: ${prodStats.total_products} created | Types: ${JSON.stringify(prodStats.by_type)}`,
+      `Products: ${prodStats.products_created} created | Revenue: $${(prodStats.total_revenue||0).toFixed(2)}`,
       `Self-Heal: ${healReport.total_errors} errors caught | ${healReport.active_flags.length} active fixes`,
       `Earned: $${(fin.owner_total_earned||0).toFixed(2)}`,
     ],
@@ -389,7 +390,7 @@ async function main() {
     `  Revenue:    ${c("green","$"+(fin.owner_total_earned||0).toFixed(2))}\n` +
     `  Videos:     ${state.videos_built} uploaded\n` +
     `  Brain:      ${brainFinal.total_videos} tracked | ${brainFinal.best_angle||"learning"} winning\n` +
-    `  Products:   ${prodStats.total_products} total | ${prodStats.recent.filter(p=>p.url).length} live on Gumroad\n` +
+    `  Products:   ${prodStats.products_created} created\n` +
     `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n`
   );
 }
