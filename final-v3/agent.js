@@ -13,7 +13,7 @@ const treasury  = require("./core/treasury");
 const niche     = require("./core/niche");
 const youtube   = require("./modules/youtube/youtube");
 const printify  = require("./modules/printify/printify");
-const gumroad   = require("./modules/gumroad/gumroad-products");
+
 const affiliate = require("./modules/affiliate/affiliate");
 const brain     = require("./core/brain");
 const heal      = require("./core/self-healing");
@@ -257,7 +257,7 @@ async function main() {
     if (productResult.status === "created") {
       ok(`New product: "${productResult.title}" at $${productResult.price} (competitors: $${productResult.competitor_price})`);
       if (productResult.url) {
-        ok(`Live on Gumroad: ${productResult.url}`);
+        ok(`Live on store: ${productResult.url}`);
         await notify.sendTelegram(
           `🛍️ New Product Live!\n"${productResult.title}"\n` +
           `Price: $${productResult.price} (competitors charge $${productResult.competitor_price})\n` +
