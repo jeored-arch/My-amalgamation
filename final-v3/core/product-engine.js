@@ -255,26 +255,17 @@ async function publishPayhip(content, pdfPath, price, apiKey) {
   if (pdfPath && fs.existsSync(pdfPath) && productId) {
     const fileData = fs.readFileSync(pdfPath);
     const boundary = "Boundary" + Date.now();
+    const CRLF     = "\r\n";
     const header   = Buffer.from(
-      "--" + boundary + "
-" +
-      "Content-Disposition: form-data; name="file"; filename="" + path.basename(pdfPath) + ""
-" +
-      "Content-Type: application/pdf
-
-"
+      "--" + boundary + CRLF +
+      "Content-Disposition: form-data; name=\"file\"; filename=\"" + path.basename(pdfPath) + "\"" + CRLF +
+      "Content-Type: application/pdf" + CRLF + CRLF
     );
-    const middle   = Buffer.from(
-      "
---" + boundary + "
-" +
-      "Content-Disposition: form-data; name="link"
-
-" +
+    const middle = Buffer.from(
+      CRLF + "--" + boundary + CRLF +
+      "Content-Disposition: form-data; name=\"link\"" + CRLF + CRLF +
       productId +
-      "
---" + boundary + "--
-"
+      CRLF + "--" + boundary + "--" + CRLF
     );
     const body = Buffer.concat([header, fileData, middle]);
 
@@ -284,8 +275,8 @@ async function publishPayhip(content, pdfPath, price, apiKey) {
         path:     "/api/v1/product/file",
         method:   "POST",
         headers: {
-          "Api-Key":      apiKey,
-          "Content-Type": "multipart/form-data; boundary=" + boundary,
+          "Api-Key":        apiKey,
+          "Content-Type":   "multipart/form-data; boundary=" + boundary,
           "Content-Length": body.length,
         },
       }, function(res) {
@@ -302,7 +293,7 @@ async function publishPayhip(content, pdfPath, price, apiKey) {
     });
   }
 
-  console.log("     ✓ Live on Payhip: " + productUrl + " at $" + price);
+    console.log("     ✓ Live on Payhip: " + productUrl + " at $" + price);
   return { id: productId, url: productUrl, name: content.name, price };
 }
 
