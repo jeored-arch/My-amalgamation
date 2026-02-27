@@ -248,8 +248,7 @@ async function main() {
     const productResult = await products.run(
       currentNiche,
       config.anthropic.api_key,
-      config.anthropic.model,
-      process.env.GUMROAD_ACCESS_TOKEN || null
+      config.anthropic.model
     );
     if (productResult.status === "created") {
       ok(`New product: "${productResult.title}" at $${productResult.price} (competitors: $${productResult.competitor_price})`);
@@ -258,7 +257,7 @@ async function main() {
         await notify.sendTelegram(
           `🛍️ New Product Live!\n"${productResult.title}"\n` +
           `Price: $${productResult.price} (competitors charge $${productResult.competitor_price})\n` +
-          `URL: ${productResult.url}\n\nInsight: ${productResult.insight}`
+          `Payhip: ${productResult.url}\n\nInsight: ${productResult.insight}`
         ).catch(()=>{});
       } else {
         inf(`Product built locally — add GUMROAD_ACCESS_TOKEN to Railway to auto-publish`);
