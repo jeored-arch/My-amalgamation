@@ -216,9 +216,9 @@ async function publishToStore(content, pdfPath, price, niche, type) {
     const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
       ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN
       : "http://localhost:" + (process.env.PORT || 3000);
-    const url = baseUrl + "/store/buy/" + entry.id;
-    console.log("     ✓ Live on store: " + url);
-    return { id: entry.id, url, name: content.name, price };
+    const storeUrl = baseUrl + "/store/buy/" + entry.id;
+    console.log("     ✓ Live on store: " + storeUrl);
+    return { id: entry.id, url: storeUrl, name: content.name, price };
   } catch(e) {
     console.log("     → Store publish error: " + e.message.slice(0,100));
     return null;
