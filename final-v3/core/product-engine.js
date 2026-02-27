@@ -195,70 +195,115 @@ function generatePDF(content, outputPath) {
   return outputPath;
 }
 
-// ── STEP 4: PUBLISH TO GUMROAD ────────────────────────────────────────────────
+// ── STEP 4: PUBLISH TO PAYHIP ────────────────────────────────────────────────
+// Payhip has a working API and handles digital product delivery automatically.
 
-function gumroadPost(endpoint, bodyStr, apiKey) {
-  return new Promise(function(resolve) {
+async function publishPayhip(content, pdfPath, price, apiKey) {
+  if (!apiKey) {
+    console.log("     → Missing PAYHIP_API_KEY");
+    return null;
+  }
+  console.log("     → Publishing to Payhip...");
+  console.log("     → Key prefix: " + apiKey.slice(0,8) + "...");
+
+  // Step 1: Create the product listing
+  const productData = new URLSearchParams({
+    title:       (content.name || "Digital Guide").slice(0, 100),
+    description: (content.description || content.tagline || "A helpful digital guide").slice(0, 2000),
+    price:       String(price),
+    currency:    "USD",
+    type:        "digital",
+  }).toString();
+
+  const createRes = await new Promise(function(resolve) {
     const req = https.request({
-      hostname: "api.gumroad.com", path: endpoint, method: "POST",
+      hostname: "payhip.com",
+      path:     "/api/v1/product",
+      method:   "POST",
       headers: {
-        "Authorization": "Bearer " + apiKey,
+        "Api-Key":      apiKey,
         "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(bodyStr),
+        "Content-Length": Buffer.byteLength(productData),
       },
     }, function(res) {
       var d = "";
       res.on("data", function(c){ d += c; });
       res.on("end", function() {
-        console.log("     → Gumroad HTTP " + res.statusCode + " | " + d.slice(0,150));
-        try { resolve(JSON.parse(d)); } catch(e) { resolve(null); }
+        console.log("     → Payhip create HTTP " + res.statusCode + " | " + d.slice(0,150));
+        try { resolve({ status: res.statusCode, data: JSON.parse(d) }); }
+        catch(e) { resolve({ status: res.statusCode, data: null, raw: d.slice(0,150) }); }
       });
     });
-    req.on("error", function(e){ console.log("     → Gumroad network error: " + e.message); resolve(null); });
-    req.write(bodyStr); req.end();
+    req.on("error", function(e) {
+      console.log("     → Payhip network error: " + e.message);
+      resolve({ status: 0, data: null });
+    });
+    req.write(productData);
+    req.end();
   });
-}
 
-async function publishGumroad(content, pdfPath, price, apiKey) {
-  console.log("     → Publishing to Gumroad (Bearer auth)...");
-  console.log("     → Key prefix: " + apiKey.slice(0,8) + "... (" + apiKey.length + " chars)");
-  const bodyStr = new URLSearchParams({
-    name:        (content.name || "Digital Guide").slice(0,80),
-    description: (content.description || content.tagline || "A helpful digital guide").slice(0,500),
-    price:       String(Math.round(price * 100)),
-    published:   "true",
-  }).toString();
-  const res = await gumroadPost("/v2/products", bodyStr, apiKey);
-
-  if (!res || !res.success || !res.product) {
-    console.log("     → Gumroad publish failed: " + JSON.stringify(res).slice(0,200));
+  if (!createRes.data || createRes.status !== 200) {
+    console.log("     → Payhip product creation failed");
     return null;
   }
-  const id = res.product.id;
 
-  // Upload PDF file
-  if (pdfPath && fs.existsSync(pdfPath)) {
+  const productId  = createRes.data.data?.link || createRes.data.link || createRes.data.id;
+  const productUrl = "https://payhip.com/b/" + productId;
+  console.log("     → Product created: " + productUrl);
+
+  // Step 2: Upload the PDF file
+  if (pdfPath && fs.existsSync(pdfPath) && productId) {
     const fileData = fs.readFileSync(pdfPath);
     const boundary = "Boundary" + Date.now();
-    const header   = Buffer.from("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + path.basename(pdfPath) + "\"\r\nContent-Type: application/pdf\r\n\r\n");
-    const footer   = Buffer.from("\r\n--" + boundary + "--\r\n");
-    const body     = Buffer.concat([header, fileData, footer]);
+    const header   = Buffer.from(
+      "--" + boundary + "
+" +
+      "Content-Disposition: form-data; name="file"; filename="" + path.basename(pdfPath) + ""
+" +
+      "Content-Type: application/pdf
+
+"
+    );
+    const middle   = Buffer.from(
+      "
+--" + boundary + "
+" +
+      "Content-Disposition: form-data; name="link"
+
+" +
+      productId +
+      "
+--" + boundary + "--
+"
+    );
+    const body = Buffer.concat([header, fileData, middle]);
+
     await new Promise(function(resolve) {
       const req = https.request({
-        hostname: "api.gumroad.com", path: "/v2/products/" + id + "/files", method: "POST",
+        hostname: "payhip.com",
+        path:     "/api/v1/product/file",
+        method:   "POST",
         headers: {
-          "Authorization": "Bearer " + apiKey,
+          "Api-Key":      apiKey,
           "Content-Type": "multipart/form-data; boundary=" + boundary,
           "Content-Length": body.length,
         },
-      }, function(r) { r.resume(); r.on("end", function(){ console.log("     → File upload HTTP " + r.statusCode); resolve(); }); });
-      req.on("error", function(){ resolve(); }); req.write(body); req.end();
+      }, function(res) {
+        var d = "";
+        res.on("data", function(c){ d += c; });
+        res.on("end", function() {
+          console.log("     → Payhip file upload HTTP " + res.statusCode + " | " + d.slice(0,100));
+          resolve();
+        });
+      });
+      req.on("error", function(){ resolve(); });
+      req.write(body);
+      req.end();
     });
   }
 
-  const url = res.product.short_url || res.product.url || ("https://gumroad.com/l/" + id);
-  console.log("     ✓ Live: " + url + " at $" + price);
-  return { id, url, name: content.name, price };
+  console.log("     ✓ Live on Payhip: " + productUrl + " at $" + price);
+  return { id: productId, url: productUrl, name: content.name, price };
 }
 
 // ── STATS & TRACKING ──────────────────────────────────────────────────────────
@@ -276,7 +321,7 @@ function getStats() {
 
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 
-async function run(niche, apiKey, model, gumroadKey) {
+async function run(niche, apiKey, model) {
   console.log("\n  🏭 Product Engine...");
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
@@ -300,11 +345,13 @@ async function run(niche, apiKey, model, gumroadKey) {
     generatePDF(content, pdfPath);
 
     let published = null;
-    if (gumroadKey) {
-      published = await publishGumroad(content, pdfPath, research.our_price, gumroadKey);
-      if (published) recordProduct(content.name, research.type, niche, research.our_price, published.url, "gumroad");
+    const payhipKey = process.env.PAYHIP_API_KEY || null;
+
+    if (payhipKey) {
+      published = await publishPayhip(content, pdfPath, research.our_price, payhipKey);
+      if (published) recordProduct(content.name, research.type, niche, research.our_price, published.url, "payhip");
     } else {
-      console.log("     → Set GUMROAD_ACCESS_TOKEN in Railway to auto-publish");
+      console.log("     → Set PAYHIP_API_KEY in Railway to auto-publish");
       recordProduct(content.name, research.type, niche, research.our_price, null, "local");
     }
 
