@@ -264,7 +264,7 @@ async function main() {
           `Payhip: ${productResult.url}\n\nInsight: ${productResult.insight}`
         ).catch(()=>{});
       } else {
-        inf(`Product built locally — add GUMROAD_ACCESS_TOKEN to Railway to auto-publish`);
+        inf(`Product saved locally — store not configured`);
       }
     } else if (productResult.status === "skipped") {
       inf("Product already created today");
