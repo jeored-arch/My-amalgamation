@@ -18,6 +18,7 @@ const affiliate = require("./modules/affiliate/affiliate");
 const brain     = require("./core/brain");
 const heal      = require("./core/self-healing");
 const products  = require("./core/product-engine");
+const store     = require("./core/store");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -79,6 +80,9 @@ async function heartbeat() {
 async function main() {
   fs.mkdirSync(DATA_DIR,{recursive:true});
   vault.validateSetup();
+
+  // Start the store server
+  try { store.startStore(); } catch(e) { console.log("  → Store: " + e.message); }
 
   if (isPaused()) {
     await notify.sendTelegram("⏸ Agent paused. Send /resume to restart.").catch(()=>{});
@@ -338,6 +342,7 @@ async function main() {
   const brainFinal = brain.getReport();
   const healReport = heal.getReport();
     const prodStats  = products.getStats();
+    const storeStats = store.getStoreStats();
 
   await notify.sendDailyReport({
     day: state.day,
@@ -350,6 +355,7 @@ async function main() {
       `YouTube: ${ytStats.videos_created} videos | Best angle: ${brainFinal.best_angle||"learning..."}`,
       `Brain: ${brainFinal.total_videos} tracked | $${brainFinal.total_revenue.toFixed(2)} revenue`,
       `Products: ${prodStats.products_created} created | Revenue: $${(prodStats.total_revenue||0).toFixed(2)}`,
+      `Store: ${storeStats.active_products} live | ${storeStats.total_orders} orders | $${storeStats.total_revenue.toFixed(2)} revenue`,
       `Self-Heal: ${healReport.total_errors} errors caught | ${healReport.active_flags.length} active fixes`,
       `Earned: $${(fin.owner_total_earned||0).toFixed(2)}`,
     ],
