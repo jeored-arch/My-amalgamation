@@ -10,8 +10,6 @@
 "use strict";
 
 const fs    = require("fs");
-let storeModule = null;
-try { storeModule = require("./store"); } catch(e) {}
 const path  = require("path");
 const https = require("https");
 
@@ -289,20 +287,9 @@ async function run(niche, apiKey, model) {
     const pdfPath  = path.join(OUT_DIR, safeName + ".pdf");
     generatePDF(content, pdfPath);
 
-    // Add to our own Railway store
-    let published = null;
-    if (storeModule) {
-      published = storeModule.addProduct({
-        name:        content.name,
-        description: content.description || content.tagline || research.opportunity || "",
-        price:       research.our_price,
-        pdfPath,
-        type:        research.type,
-        niche,
-      });
-      if (published) console.log("     ✓ Live at: /store/" + published.slug);
-    }
-    recordProduct(content.name, research.type, niche, research.our_price, published ? ("/store/" + published.slug) : null, "store");
+    // Publish to our self-hosted Railway store
+    const published = await publishToStore(content, pdfPath, research.our_price, niche, research.type);
+    recordProduct(content.name, research.type, niche, research.our_price, published ? published.url : null, "store");
 
     return {
       status:           "created",
