@@ -2,7 +2,7 @@
  * product-engine.js — Autonomous Product Creation & Market Intelligence
  *
  * Researches what sells, undercuts competitors, creates real products,
- * generates PDFs, and publishes to Gumroad — all without human input.
+ * generates PDFs, and publishes to the self-hosted store — all without human input.
  *
  * Data: data/products.json
  */
@@ -204,75 +204,51 @@ function generatePDF(content, outputPath) {
 async function publishToStore(content, pdfPath, price, niche, type) {
   console.log("     → Publishing to store...");
   try {
-    const store = require("./store");
-    const entry = store.addProduct({
+    // Inline product creation — writes directly to store-products.json
+    var DATA_DIR   = require("path").join(process.cwd(), "data");
+    var STORE_FILE = require("path").join(DATA_DIR, "store-products.json");
+    require("fs").mkdirSync(DATA_DIR, { recursive: true });
+
+    var storeData = { products: [], orders: [] };
+    try { storeData = JSON.parse(require("fs").readFileSync(STORE_FILE, "utf8")); } catch(e) {}
+
+    // Skip duplicates
+    var existing = storeData.products.find(function(p) { return p.name === content.name; });
+    if (existing) {
+      console.log("     → Store: already exists — " + (content.name||"").slice(0,50));
+      var baseUrl0 = process.env.RAILWAY_PUBLIC_DOMAIN ? "https://"+process.env.RAILWAY_PUBLIC_DOMAIN : "http://localhost:"+(process.env.PORT||3000);
+      return { id: existing.id, url: baseUrl0+"/store/buy/"+existing.id, name: existing.name, price: existing.price };
+    }
+
+    var productId = "prod_" + Date.now();
+    var entry = {
+      id:          productId,
       name:        content.name || "Digital Guide",
       description: content.description || content.tagline || "A helpful digital guide.",
       price:       price,
       file_path:   pdfPath,
-      niche:       niche,
+      niche:       niche || "",
       type:        type || "pdf_guide",
-    });
-    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+      created:     new Date().toISOString(),
+      sales:       0,
+      active:      true,
+    };
+    storeData.products.push(entry);
+    storeData.updated = new Date().toISOString();
+    require("fs").writeFileSync(STORE_FILE, JSON.stringify(storeData, null, 2));
+
+    var baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
       ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN
       : "http://localhost:" + (process.env.PORT || 3000);
-    const storeUrl = baseUrl + "/store/buy/" + entry.id;
+    var storeUrl = baseUrl + "/store/buy/" + productId;
+    console.log("     ✓ Store: added [" + entry.name.slice(0,50) + "] @ $" + price);
     console.log("     ✓ Live on store: " + storeUrl);
-    return { id: entry.id, url: storeUrl, name: content.name, price };
+    return { id: productId, url: storeUrl, name: entry.name, price };
   } catch(e) {
     console.log("     → Store publish error: " + e.message.slice(0,100));
     return null;
   }
 
-  // Legacy Payhip code kept below — no longer used
-  const productId  = null;
-  const productUrl = null;
-  console.log("     → Payhip create HTTP 0 | legacy code");
-
-  // Step 2: Upload the PDF file
-  if (pdfPath && fs.existsSync(pdfPath) && productId) {
-    const fileData = fs.readFileSync(pdfPath);
-    const boundary = "Boundary" + Date.now();
-    const CRLF     = "\r\n";
-    const header   = Buffer.from(
-      "--" + boundary + CRLF +
-      "Content-Disposition: form-data; name=\"file\"; filename=\"" + path.basename(pdfPath) + "\"" + CRLF +
-      "Content-Type: application/pdf" + CRLF + CRLF
-    );
-    const middle = Buffer.from(
-      CRLF + "--" + boundary + CRLF +
-      "Content-Disposition: form-data; name=\"link\"" + CRLF + CRLF +
-      productId +
-      CRLF + "--" + boundary + "--" + CRLF
-    );
-    const body = Buffer.concat([header, fileData, middle]);
-
-    await new Promise(function(resolve) {
-      const req = https.request({
-        hostname: "payhip.com",
-        path:     "/api/v1/product/file",
-        method:   "POST",
-        headers: {
-          "Api-Key":        apiKey,
-          "Content-Type":   "multipart/form-data; boundary=" + boundary,
-          "Content-Length": body.length,
-        },
-      }, function(res) {
-        var d = "";
-        res.on("data", function(c){ d += c; });
-        res.on("end", function() {
-          console.log("     → Payhip file upload HTTP " + res.statusCode + " | " + d.slice(0,100));
-          resolve();
-        });
-      });
-      req.on("error", function(){ resolve(); });
-      req.write(body);
-      req.end();
-    });
-  }
-
-    console.log("     ✓ Live on Payhip: " + productUrl + " at $" + price);
-  return { id: productId, url: productUrl, name: content.name, price };
 }
 
 // ── STATS & TRACKING ──────────────────────────────────────────────────────────
