@@ -15,6 +15,7 @@ const url    = require("url");
 const config = require("../config");
 const { createSession, validateSession, destroySession, checkIP, getRecentAuditLogs, getAlerts, auditLog } = require("../security/vault");
 const { loadRevenueState, getPayoutInfo } = require("../core/revenue");
+const store = require("../core/store");
 
 const PORT = config.security.dashboard_port;
 
@@ -566,6 +567,12 @@ function payoutsPage() {
 // ── SERVER ────────────────────────────────────────────────────────────────────
 
 function handleRequest(req, res) {
+  // ── STORE ROUTES (public — no auth required) ──
+  if ((req.url || "").startsWith("/store")) {
+    store.handleRequest(req, res);
+    return;
+  }
+
   const { pathname } = url.parse(req.url);
   const ip = req.socket.remoteAddress;
 
