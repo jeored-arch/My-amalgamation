@@ -131,7 +131,71 @@ function makeThumbnail(title, theme, outputPath) {
 
 // ── SLIDE BUILDER ─────────────────────────────────────────────────────────────
 
-function makeSlidePng(slide, theme, outputPath) {
+// ── PEXELS IMAGE FETCH ───────────────────────────────────────────────────────
+
+function fetchPexelsImage(query, outputPath) {
+  var apiKey = process.env.PEXELS_API_KEY || config.pexels_api_key || "";
+  if (!apiKey) return Promise.resolve(null);
+  return new Promise(function(resolve) {
+    var q = encodeURIComponent((query || "business").slice(0, 50));
+    var opts = {
+      hostname: "api.pexels.com",
+      path: "/v1/search?query=" + q + "&per_page=5&orientation=landscape",
+      headers: { "Authorization": apiKey }
+    };
+    var req = https.request(opts, function(res) {
+      var d = "";
+      res.on("data", function(c){ d += c; });
+      res.on("end", function() {
+        try {
+          var data = JSON.parse(d);
+          var photos = (data.photos || []);
+          if (!photos.length) return resolve(null);
+          // Pick a random one from top 5 for variety
+          var photo = photos[Math.floor(Math.random() * Math.min(photos.length, 5))];
+          var imgUrl = photo.src && (photo.src.large || photo.src.medium);
+          if (!imgUrl) return resolve(null);
+          var imgParsed = require("url").parse(imgUrl);
+          var imgReq = https.request({ hostname: imgParsed.hostname, path: imgParsed.path, headers: { "Authorization": apiKey } }, function(imgRes) {
+            if (imgRes.statusCode === 301 || imgRes.statusCode === 302) {
+              // Follow redirect
+              var redir = require("url").parse(imgRes.headers.location);
+              var rreq = https.request({ hostname: redir.hostname, path: redir.path + (redir.search||"") }, function(rres) {
+                var chunks = [];
+                rres.on("data", function(c){ chunks.push(c); });
+                rres.on("end", function() {
+                  var buf = Buffer.concat(chunks);
+                  if (buf.length < 5000) return resolve(null);
+                  require("fs").writeFileSync(outputPath, buf);
+                  resolve(outputPath);
+                });
+              });
+              rreq.on("error", function(){ resolve(null); });
+              rreq.end();
+              return;
+            }
+            var chunks = [];
+            imgRes.on("data", function(c){ chunks.push(c); });
+            imgRes.on("end", function() {
+              var buf = Buffer.concat(chunks);
+              if (buf.length < 5000) return resolve(null);
+              require("fs").writeFileSync(outputPath, buf);
+              resolve(outputPath);
+            });
+          });
+          imgReq.on("error", function(){ resolve(null); });
+          imgReq.end();
+        } catch(e) { resolve(null); }
+      });
+    });
+    req.on("error", function(){ resolve(null); });
+    req.end();
+  });
+}
+
+// ── SLIDE RENDERER ────────────────────────────────────────────────────────────
+
+function makeSlidePng(slide, theme, outputPath, bgImagePath) {
   var sharp;
   try { sharp = require("sharp"); } catch(e) { return Promise.reject(new Error("sharp not available")); }
   var W = 1280, H = 720;
@@ -140,57 +204,104 @@ function makeSlidePng(slide, theme, outputPath) {
   var svg;
 
   if (slide.type === "title") {
-    var lines  = wrapWords(slide.headline, 28);
-    var startY = Math.max(190, 310 - lines.length * 40);
-    var els    = lines.slice(0,3).map(function(l,i){ return '<text x="640" y="' + (startY+i*78) + '" font-family="' + fontFamily + '" font-size="58" font-weight="bold" fill="' + theme.text + '" text-anchor="middle">' + safeXml(l,36) + '</text>'; }).join("");
+    var lines  = wrapWords(slide.headline, 30);
+    var startY = Math.max(220, 340 - lines.length * 50);
+    var els    = lines.slice(0,3).map(function(l,i){
+      return '<text x="640" y="' + (startY+i*90) + '" font-family="' + fontFamily + '" font-size="72" font-weight="bold" fill="white" text-anchor="middle" filter="url(#shadow)">' + safeXml(l,36) + '</text>';
+    }).join("");
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
-      '<rect width="' + W + '" height="' + H + '" fill="#' + theme.bg + '"/>' +
-      '<rect width="' + W + '" height="8" fill="#' + theme.accent + '"/>' +
-      '<rect y="' + (H-8) + '" width="' + W + '" height="8" fill="#' + theme.accent + '" opacity="0.5"/>' +
-      '<ellipse cx="640" cy="360" rx="400" ry="200" fill="#' + theme.accent + '" opacity="0.04"/>' +
+      '<defs>' +
+        '<filter id="shadow"><feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.9"/></filter>' +
+        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.3"/><stop offset="60%" stop-color="#000" stop-opacity="0.65"/><stop offset="100%" stop-color="#000" stop-opacity="0.85"/></linearGradient>' +
+      '</defs>' +
+      '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
+      '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
+      '<rect y="' + (H-6) + '" width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
+      // Accent line
+      '<rect x="200" y="' + (startY - 30) + '" width="880" height="4" fill="#' + theme.accent + '" opacity="0.7" rx="2"/>' +
       els +
-      '<text x="640" y="590" font-family="' + fontFamily + '" font-size="24" fill="#' + theme.sub + '" text-anchor="middle">' + safeXml(slide.sub || "Watch to the end for the full breakdown", 65) + '</text>' +
-      '<rect y="' + (H-42) + '" width="' + W + '" height="42" fill="#' + theme.accent + '" opacity="0.12"/>' +
+      // Sub text
+      '<rect x="160" y="' + (H-110) + '" width="960" height="60" fill="#000" opacity="0.5" rx="6"/>' +
+      '<text x="640" y="' + (H-70) + '" font-family="' + fontFamily + '" font-size="26" fill="#' + theme.sub + '" text-anchor="middle">' + safeXml(slide.sub || "Watch this before your competition does", 70) + '</text>' +
       '</svg>';
 
   } else if (slide.type === "cta") {
-    var ctaEls = (slide.body||[]).slice(0,2).map(function(l,i){ return '<text x="640" y="' + (400+i*58) + '" font-family="' + fontFamily + '" font-size="30" fill="' + theme.text + '" text-anchor="middle">' + safeXml(l,60) + '</text>'; }).join("");
+    var ctaEls = (slide.body||[]).slice(0,2).map(function(l,i){
+      return '<text x="640" y="' + (430+i*60) + '" font-family="' + fontFamily + '" font-size="32" fill="white" text-anchor="middle" filter="url(#shadow)">' + safeXml(l,60) + '</text>';
+    }).join("");
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
-      '<rect width="' + W + '" height="' + H + '" fill="#' + theme.bg + '"/>' +
-      '<rect width="' + W + '" height="8" fill="#' + theme.accent + '"/>' +
-      '<ellipse cx="640" cy="360" rx="500" ry="250" fill="#' + theme.accent + '" opacity="0.06"/>' +
-      '<rect y="' + (H-100) + '" width="' + W + '" height="100" fill="#000000" opacity="0.6"/>' +
-      '<text x="640" y="280" font-family="' + fontFamily + '" font-size="54" font-weight="bold" fill="#' + theme.accent + '" text-anchor="middle">' + safeXml(slide.headline,42) + '</text>' +
+      '<defs>' +
+        '<filter id="shadow"><feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.9"/></filter>' +
+        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.4"/><stop offset="100%" stop-color="#000" stop-opacity="0.85"/></linearGradient>' +
+      '</defs>' +
+      '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
+      '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
+      // Bell icon area
+      '<circle cx="640" cy="200" r="60" fill="#' + theme.accent + '" opacity="0.2"/>' +
+      '<text x="640" y="216" font-family="' + fontFamily + '" font-size="60" text-anchor="middle">🔔</text>' +
+      '<text x="640" y="330" font-family="' + fontFamily + '" font-size="58" font-weight="bold" fill="#' + theme.accent + '" text-anchor="middle" filter="url(#shadow)">' + safeXml(slide.headline, 42) + '</text>' +
       ctaEls +
-      '<text x="640" y="' + (H-38) + '" font-family="' + fontFamily + '" font-size="30" fill="#' + theme.accent + '" text-anchor="middle">' + safeXml(slide.cta || "Subscribe Now!",50) + '</text>' +
+      // CTA button
+      '<rect x="340" y="' + (H-120) + '" width="600" height="70" fill="#' + theme.accent + '" rx="35"/>' +
+      '<text x="640" y="' + (H-75) + '" font-family="' + fontFamily + '" font-size="30" font-weight="bold" fill="white" text-anchor="middle">' + safeXml(slide.cta || "Subscribe Now — It is Free!", 50) + '</text>' +
       '</svg>';
 
   } else {
-    var headLines = wrapWords(slide.headline, 42);
-    var headEls   = headLines.slice(0,2).map(function(l,i){ return '<text x="640" y="' + (218+i*58) + '" font-family="' + fontFamily + '" font-size="46" font-weight="bold" fill="' + theme.text + '" text-anchor="middle">' + safeXml(l,50) + '</text>'; }).join("");
-    var body = slide.body||[], bodyEls = "", yPos = 320;
-    for (var bi = 0; bi < Math.min(body.length,4); bi++) {
-      var wrapped = wrapWords(body[bi], 60);
-      for (var wi = 0; wi < Math.min(wrapped.length,2); wi++) {
-        bodyEls += '<text x="80" y="' + yPos + '" font-family="' + fontFamily + '" font-size="28" fill="#' + theme.sub + '">' + safeXml(wrapped[wi],66) + '</text>';
-        yPos += 38;
+    // Section slide — the most common type
+    var headLines = wrapWords(slide.headline, 38);
+    var headEls   = headLines.slice(0,2).map(function(l,i){
+      return '<text x="640" y="' + (195+i*72) + '" font-family="' + fontFamily + '" font-size="54" font-weight="bold" fill="white" text-anchor="middle" filter="url(#shadow)">' + safeXml(l,50) + '</text>';
+    }).join("");
+    var body = slide.body||[];
+    var bodyEls = "", yPos = headLines.length > 1 ? 340 : 300;
+    for (var bi = 0; bi < Math.min(body.length, 4); bi++) {
+      var wrapped = wrapWords(body[bi], 52);
+      for (var wi = 0; wi < Math.min(wrapped.length, 2); wi++) {
+        bodyEls += '<text x="110" y="' + yPos + '" font-family="' + fontFamily + '" font-size="30" fill="#eeeeee" filter="url(#shadow)">' + safeXml(wrapped[wi], 62) + '</text>';
+        yPos += 44;
       }
-      yPos += 16;
+      yPos += 14;
     }
-    var bulletSvg = "", bY = 295;
-    for (var bj = 0; bj < Math.min((slide.body||[]).length,4); bj++) { bulletSvg += '<rect x="60" y="' + bY + '" width="6" height="26" fill="#' + theme.accent + '" rx="3"/>'; bY += 54; }
+    // Bullet dots
+    var bulletSvg = "", bY = headLines.length > 1 ? 318 : 278;
+    for (var bj = 0; bj < Math.min(body.length, 4); bj++) {
+      bulletSvg += '<circle cx="80" cy="' + bY + '" r="8" fill="#' + theme.accent + '"/>';
+      bY += 58;
+    }
+    // Progress bar at bottom (slide number feel)
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
-      '<rect width="' + W + '" height="' + H + '" fill="#' + theme.bg + '"/>' +
-      '<rect width="' + W + '" height="8" fill="#' + theme.accent + '"/>' +
-      '<rect x="60" y="148" width="' + (W-120) + '" height="' + (headLines.length > 1 ? 128 : 76) + '" fill="#' + theme.accent + '" opacity="0.08" rx="6"/>' +
-      '<rect x="60" y="148" width="6" height="' + (headLines.length > 1 ? 128 : 76) + '" fill="#' + theme.accent + '" rx="3"/>' +
-      '<rect y="' + (H-46) + '" width="' + W + '" height="46" fill="#000000" opacity="0.4"/>' +
-      headEls + bulletSvg + bodyEls +
-      '<text x="640" y="' + (H-15) + '" font-family="' + fontFamily + '" font-size="16" fill="#444444" text-anchor="middle">Subscribe for more</text>' +
+      '<defs>' +
+        '<filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#000" flood-opacity="0.95"/></filter>' +
+        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.25"/><stop offset="45%" stop-color="#000" stop-opacity="0.6"/><stop offset="100%" stop-color="#000" stop-opacity="0.88"/></linearGradient>' +
+        '<linearGradient id="hgrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#' + theme.accent + '" stop-opacity="0.25"/><stop offset="100%" stop-color="#' + theme.accent + '" stop-opacity="0"/></linearGradient>' +
+      '</defs>' +
+      '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
+      // Header band
+      '<rect width="' + W + '" height="240" fill="url(#hgrad)"/>' +
+      '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
+      // Headline bg pill
+      '<rect x="40" y="130" width="' + (W-80) + '" height="' + (headLines.length > 1 ? 145 : 80) + '" fill="#000" opacity="0.45" rx="8"/>' +
+      '<rect x="40" y="130" width="6" height="' + (headLines.length > 1 ? 145 : 80) + '" fill="#' + theme.accent + '" rx="3"/>' +
+      headEls +
+      bulletSvg + bodyEls +
+      // Bottom bar
+      '<rect y="' + (H-50) + '" width="' + W + '" height="50" fill="#000" opacity="0.6"/>' +
+      '<text x="640" y="' + (H-18) + '" font-family="' + fontFamily + '" font-size="18" fill="#' + theme.sub + '" text-anchor="middle" opacity="0.8">Subscribe for daily tips</text>' +
       '</svg>';
   }
 
-  return sharp({ create: { width: W, height: H, channels: 3, background: bg } })
+  // Composite: background image (if available) + dark overlay SVG
+  var layers = [];
+  if (bgImagePath && require("fs").existsSync(bgImagePath)) {
+    layers.push({ input: bgImagePath, top: 0, left: 0 });
+  }
+  layers.push({ input: Buffer.from(svg), top: 0, left: 0 });
+
+  var base = bgImagePath && require("fs").existsSync(bgImagePath)
+    ? sharp(bgImagePath).resize(W, H, { fit: "cover", position: "centre" })
+    : sharp({ create: { width: W, height: H, channels: 3, background: bg } });
+
+  return base
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
     .png()
     .toFile(outputPath);
@@ -363,14 +474,28 @@ function buildVideo(title, scriptText, outputPath, theme) {
   var slides = scriptToSlides(title, scriptText);
   console.log("     → Rendering " + slides.length + " slides (" + theme.name + " theme)...");
 
-  var pngTasks = slides.map(function(slide, i) {
-    var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + ".png");
-    return makeSlidePng(slide, theme, pngPath)
-      .then(function() { return pngPath; })
-      .catch(function(e) { console.log("     → Slide " + i + " err: " + e.message.slice(0,50)); return null; });
+  // Fetch one Pexels image per slide topic (in parallel, best-effort)
+  var pexelsKey = process.env.PEXELS_API_KEY || (config.pexels_api_key || "");
+  var imgDir = path.join(tmpDir, "imgs");
+  fs.mkdirSync(imgDir, { recursive: true });
+
+  var imgTasks = slides.map(function(slide, i) {
+    if (!pexelsKey) return Promise.resolve(null);
+    var query = (slide.headline || title).replace(/[^a-zA-Z0-9 ]/g, " ").slice(0, 40);
+    var imgPath = path.join(imgDir, "bg" + i + ".jpg");
+    return fetchPexelsImage(query, imgPath).catch(function(){ return null; });
   });
 
-  return Promise.all(pngTasks).then(function(pngPaths) {
+  var pngTasks = Promise.all(imgTasks).then(function(bgImages) {
+    return Promise.all(slides.map(function(slide, i) {
+      var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + ".png");
+      return makeSlidePng(slide, theme, pngPath, bgImages[i])
+        .then(function() { return pngPath; })
+        .catch(function(e) { console.log("     → Slide " + i + " err: " + e.message.slice(0,50)); return null; });
+    }));
+  });
+
+  return pngTasks.then(function(pngPaths) {
     var validPngs = pngPaths.filter(function(p){ return p && fs.existsSync(p) && fs.statSync(p).size > 500; });
     if (validPngs.length === 0) return { status: "no_pngs_built" };
     console.log("     → " + validPngs.length + "/" + slides.length + " PNGs ready (first: " + fs.statSync(validPngs[0]).size + " bytes)");
@@ -532,12 +657,23 @@ function uploadThumbnail(videoId, thumbnailPath, accessToken) {
   });
 }
 
+// ── INJECT STORE LINK INTO DESCRIPTION ───────────────────────────────────────
+function buildDescription(desc) {
+  var storeUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN + "/store"
+    : null;
+  var storeBlock = storeUrl
+    ? "\n\n🛒 GET THE TOOLKIT: " + storeUrl + "\n(Digital guides & toolkits — instant download)"
+    : "";
+  return desc + storeBlock + "\n\n---\nNew video every day. Subscribe & hit the bell 🔔";
+}
+
 function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
   if (!config.youtube.refresh_token) return Promise.resolve({ status: "no_credentials" });
   if (!fs.existsSync(videoFilePath)) return Promise.resolve({ status: "no_video_file" });
   return getAccessToken().then(function(accessToken) {
     var initBody = JSON.stringify({
-      snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: scriptData.description||"Subscribe for daily videos!", tags: scriptData.tags||["AI","tools","tutorial"], categoryId: "27" },
+      snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: buildDescription(scriptData.description||"Subscribe for daily videos!"), tags: scriptData.tags||["AI","tools","tutorial"], categoryId: "27" },
       status: { privacyStatus: "public", selfDeclaredMadeForKids: false },
     });
     var fileSize = fs.statSync(videoFilePath).size;
@@ -694,6 +830,88 @@ function getGrowthStatus() {
   return { videos_created: videos.length, videos_uploaded: videos.filter(function(v){ return v.status==="uploaded"; }).length };
 }
 
+// ── YOUTUBE SHORTS ───────────────────────────────────────────────────────────
+
+function buildShort(longVideoPath, ffmpegPath, outputPath) {
+  // Clip first 55s + crop to 9:16 vertical (1080x1920) from center of 1280x720
+  // YouTube auto-detects Shorts from aspect ratio + duration under 60s
+  try {
+    require("child_process").execSync(
+      "\"" + ffmpegPath + "\" -y " +
+      "-i \"" + longVideoPath + "\" " +
+      "-t 55 " +
+      "-vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\" " +
+      "-c:v libx264 -pix_fmt yuv420p -preset ultrafast -crf 26 " +
+      "-c:a aac -b:a 128k " +
+      "\"" + outputPath + "\"",
+      { stdio: "pipe", timeout: 120000 }
+    );
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
+      var sizeMb = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
+      console.log("     ✓ Short created: " + sizeMb + "MB (55s vertical)");
+      return outputPath;
+    }
+  } catch(e) {
+    console.log("     → Short build err: " + e.message.slice(0, 100));
+  }
+  return null;
+}
+
+function uploadShort(shortVideoPath, longTitle, tags, accessToken) {
+  if (!shortVideoPath || !fs.existsSync(shortVideoPath)) return Promise.resolve(null);
+  var shortTitle = ("#Shorts " + longTitle).slice(0, 100);
+  var shortDesc  = buildDescription("Watch the full video on our channel for the complete breakdown.") + "\n\n#Shorts #" + (tags[0]||"tips").replace(/[^a-zA-Z0-9]/g,"");
+
+
+  var initBody = JSON.stringify({
+    snippet: { title: shortTitle, description: shortDesc, tags: (tags||[]).concat(["Shorts","short","youtube shorts"]).slice(0,15), categoryId: "27" },
+    status:  { privacyStatus: "public", selfDeclaredMadeForKids: false },
+  });
+  var fileSize = fs.statSync(shortVideoPath).size;
+  return new Promise(function(resolve) {
+    var initReq = https.request({
+      hostname: "www.googleapis.com",
+      path: "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + accessToken,
+        "Content-Type": "application/json",
+        "X-Upload-Content-Type": "video/mp4",
+        "X-Upload-Content-Length": fileSize,
+        "Content-Length": Buffer.byteLength(initBody),
+      },
+    }, function(res) {
+      var uploadUrl = res.headers.location;
+      if (!uploadUrl) { resolve(null); return; }
+      var fileData = fs.readFileSync(shortVideoPath);
+      var uploadReq = https.request(uploadUrl, { method: "PUT", headers: { "Content-Type": "video/mp4", "Content-Length": fileSize } },
+        function(upRes) {
+          var d = "";
+          upRes.on("data", function(c){ d += c; });
+          upRes.on("end", function() {
+            try {
+              var r = JSON.parse(d);
+              if (r.id) {
+                console.log("     ✓ Short uploaded! https://youtube.com/shorts/" + r.id);
+                resolve({ id: r.id, url: "https://youtube.com/shorts/" + r.id });
+              } else {
+                console.log("     → Short upload response: " + d.slice(0, 100));
+                resolve(null);
+              }
+            } catch(e) { resolve(null); }
+          });
+        }
+      );
+      uploadReq.on("error", function(){ resolve(null); });
+      uploadReq.write(fileData);
+      uploadReq.end();
+    });
+    initReq.on("error", function(){ resolve(null); });
+    initReq.write(initBody);
+    initReq.end();
+  });
+}
+
 // ── MAIN RUN ──────────────────────────────────────────────────────────────────
 
 function run(niche, product_url) {
@@ -751,7 +969,22 @@ function run(niche, product_url) {
         log[log.length-1].youtube_url = uploadResult.url;
         fs.writeFileSync(logFile, JSON.stringify(log,null,2));
       }
-      return { status: "complete", title: topicData.title, dir: videoDir, upload: uploadResult };
+      // ── UPLOAD SHORT ──────────────────────────────────────────────────
+      var ffmpegPath2 = findFfmpeg();
+      var shortPath   = path.join(videoDir, "short.mp4");
+      var shortFile   = ffmpegPath2 ? buildShort(path.join(videoDir,"video.mp4"), ffmpegPath2, shortPath) : null;
+      var shortUpload = Promise.resolve(null);
+      if (shortFile && uploadResult.status === "success") {
+        shortUpload = getAccessToken().then(function(tok) {
+          return uploadShort(shortFile, metaData.title || topicData.title, metaData.tags || [], tok);
+        }).catch(function(e) {
+          console.log("     → Short upload err: " + e.message.slice(0,80));
+          return null;
+        });
+      }
+      return shortUpload.then(function(shortResult) {
+        return { status: "complete", title: topicData.title, dir: videoDir, upload: uploadResult, short: shortResult };
+      });
     });
   });
 }
