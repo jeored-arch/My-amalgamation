@@ -840,11 +840,11 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
       "\"" + ffmpegPath + "\" -y " +
       "-i \"" + longVideoPath + "\" " +
       "-t 55 " +
-      "-vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\" " +
-      "-c:v libx264 -pix_fmt yuv420p -preset ultrafast -crf 26 " +
-      "-c:a aac -b:a 128k " +
+      "-vf \"crop=in_h*9/16:in_h:(in_w-in_h*9/16)/2:0,scale=1080:1920\" " +
+      "-c:v libx264 -pix_fmt yuv420p -preset ultrafast -crf 28 " +
+      "-c:a aac -b:a 96k " +
       "\"" + outputPath + "\"",
-      { stdio: "pipe", timeout: 120000 }
+      { stdio: "pipe", timeout: 180000 }
     );
     if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) {
       var sizeMb = (fs.statSync(outputPath).size / 1024 / 1024).toFixed(1);
