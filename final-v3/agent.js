@@ -81,8 +81,16 @@ async function main() {
   fs.mkdirSync(DATA_DIR,{recursive:true});
   vault.validateSetup();
 
-  // Start the store server
-  try { store.startStore(); } catch(e) { console.log("  → Store: " + e.message); }
+  // ── START HTTP SERVER ──────────────────────────────────────────────────────
+  const http = require("http");
+  const { handleRequest } = require("./dashboard/server");
+  const PORT = parseInt(process.env.PORT || config.security.dashboard_port || 3000);
+  const httpServer = http.createServer(handleRequest);
+  httpServer.listen(PORT, () => {
+    console.log("     \u2192 Font: DejaVuSans-Bold.ttf");
+    console.log("  \u2713  Store available at https://" + (process.env.RAILWAY_PUBLIC_DOMAIN || ("localhost:" + PORT)) + "/store");
+  });
+  // ──────────────────────────────────────────────────────────────────────────
 
   if (isPaused()) {
     await notify.sendTelegram("⏸ Agent paused. Send /resume to restart.").catch(()=>{});
