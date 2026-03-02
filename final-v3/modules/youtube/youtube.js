@@ -10,8 +10,6 @@ const client   = new Anthropic({ apiKey: config.anthropic.api_key });
 const OUT_DIR  = path.join(process.cwd(), "output", "youtube");
 const DATA_DIR = path.join(process.cwd(), "data", "youtube");
 
-// ── FONT SETUP ────────────────────────────────────────────────────────────────
-
 function setupFonts() {
   var candidates = [
     path.join(process.cwd(), "assets", "DejaVuSans-Bold.ttf"),
@@ -41,15 +39,11 @@ function setupFonts() {
 
 var FONT_FILE = setupFonts();
 
-// ── FIND FFMPEG ───────────────────────────────────────────────────────────────
-
 function findFfmpeg() {
   try { var p = require("ffmpeg-static"); if (p && fs.existsSync(p)) { console.log("     → ffmpeg: ffmpeg-static"); return p; } } catch(e) {}
   try { var w = require("child_process").execSync("which ffmpeg", { encoding: "utf8" }).trim(); if (w) { console.log("     → ffmpeg: system"); return w; } } catch(e) {}
   return null;
 }
-
-// ── TOPIC TRACKING ────────────────────────────────────────────────────────────
 
 function getUsedTopics() {
   var logFile = path.join(DATA_DIR, "videos.json");
@@ -57,8 +51,6 @@ function getUsedTopics() {
   try { return JSON.parse(fs.readFileSync(logFile, "utf8")).map(function(v) { return (v.title || "").toLowerCase(); }); }
   catch(e) { return []; }
 }
-
-// ── SVG HELPERS ───────────────────────────────────────────────────────────────
 
 function safeXml(s, maxLen) {
   return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;").slice(0, maxLen || 80);
@@ -77,8 +69,6 @@ function wrapWords(text, maxChars) {
   return lines;
 }
 
-// ── COLOR THEMES ──────────────────────────────────────────────────────────────
-
 var THEMES = [
   { bg: "0d1b2a", accent: "4488ff", text: "white", sub: "88aaff", name: "deep-blue"   },
   { bg: "1a0a00", accent: "ff6600", text: "white", sub: "ffaa44", name: "orange-fire" },
@@ -94,8 +84,6 @@ function getTheme(dayOffset) { return THEMES[dayOffset % THEMES.length]; }
 function hexToRgb(hex) {
   return { r: parseInt(hex.slice(0,2),16), g: parseInt(hex.slice(2,4),16), b: parseInt(hex.slice(4,6),16) };
 }
-
-// ── THUMBNAIL GENERATOR ───────────────────────────────────────────────────────
 
 function makeThumbnail(title, theme, outputPath) {
   var sharp;
@@ -129,10 +117,6 @@ function makeThumbnail(title, theme, outputPath) {
     .catch(function() { return null; });
 }
 
-// ── SLIDE BUILDER ─────────────────────────────────────────────────────────────
-
-// ── PEXELS IMAGE FETCH ───────────────────────────────────────────────────────
-
 function fetchPexelsImage(query, outputPath) {
   var apiKey = process.env.PEXELS_API_KEY || config.pexels_api_key || "";
   if (!apiKey) return Promise.resolve(null);
@@ -151,14 +135,12 @@ function fetchPexelsImage(query, outputPath) {
           var data = JSON.parse(d);
           var photos = (data.photos || []);
           if (!photos.length) return resolve(null);
-          // Pick a random one from top 5 for variety
           var photo = photos[Math.floor(Math.random() * Math.min(photos.length, 5))];
           var imgUrl = photo.src && (photo.src.large || photo.src.medium);
           if (!imgUrl) return resolve(null);
           var imgParsed = require("url").parse(imgUrl);
           var imgReq = https.request({ hostname: imgParsed.hostname, path: imgParsed.path, headers: { "Authorization": apiKey } }, function(imgRes) {
             if (imgRes.statusCode === 301 || imgRes.statusCode === 302) {
-              // Follow redirect
               var redir = require("url").parse(imgRes.headers.location);
               var rreq = https.request({ hostname: redir.hostname, path: redir.path + (redir.search||"") }, function(rres) {
                 var chunks = [];
@@ -193,8 +175,6 @@ function fetchPexelsImage(query, outputPath) {
   });
 }
 
-// ── SLIDE RENDERER ────────────────────────────────────────────────────────────
-
 function makeSlidePng(slide, theme, outputPath, bgImagePath) {
   var sharp;
   try { sharp = require("sharp"); } catch(e) { return Promise.reject(new Error("sharp not available")); }
@@ -217,10 +197,8 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
       '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
       '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
       '<rect y="' + (H-6) + '" width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
-      // Accent line
       '<rect x="200" y="' + (startY - 30) + '" width="880" height="4" fill="#' + theme.accent + '" opacity="0.7" rx="2"/>' +
       els +
-      // Sub text
       '<rect x="160" y="' + (H-110) + '" width="960" height="60" fill="#000" opacity="0.5" rx="6"/>' +
       '<text x="640" y="' + (H-70) + '" font-family="' + fontFamily + '" font-size="26" fill="#' + theme.sub + '" text-anchor="middle">' + safeXml(slide.sub || "Watch this before your competition does", 70) + '</text>' +
       '</svg>';
@@ -236,18 +214,15 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
       '</defs>' +
       '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
       '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
-      // Bell icon area
       '<circle cx="640" cy="200" r="60" fill="#' + theme.accent + '" opacity="0.2"/>' +
       '<text x="640" y="216" font-family="' + fontFamily + '" font-size="60" text-anchor="middle">🔔</text>' +
       '<text x="640" y="330" font-family="' + fontFamily + '" font-size="58" font-weight="bold" fill="#' + theme.accent + '" text-anchor="middle" filter="url(#shadow)">' + safeXml(slide.headline, 42) + '</text>' +
       ctaEls +
-      // CTA button
       '<rect x="340" y="' + (H-120) + '" width="600" height="70" fill="#' + theme.accent + '" rx="35"/>' +
       '<text x="640" y="' + (H-75) + '" font-family="' + fontFamily + '" font-size="30" font-weight="bold" fill="white" text-anchor="middle">' + safeXml(slide.cta || "Subscribe Now — It is Free!", 50) + '</text>' +
       '</svg>';
 
   } else {
-    // Section slide — the most common type
     var headLines = wrapWords(slide.headline, 38);
     var headEls   = headLines.slice(0,2).map(function(l,i){
       return '<text x="640" y="' + (195+i*72) + '" font-family="' + fontFamily + '" font-size="54" font-weight="bold" fill="white" text-anchor="middle" filter="url(#shadow)">' + safeXml(l,50) + '</text>';
@@ -262,13 +237,11 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
       }
       yPos += 14;
     }
-    // Bullet dots
     var bulletSvg = "", bY = headLines.length > 1 ? 318 : 278;
     for (var bj = 0; bj < Math.min(body.length, 4); bj++) {
       bulletSvg += '<circle cx="80" cy="' + bY + '" r="8" fill="#' + theme.accent + '"/>';
       bY += 58;
     }
-    // Progress bar at bottom (slide number feel)
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
       '<defs>' +
         '<filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#000" flood-opacity="0.95"/></filter>' +
@@ -276,26 +249,16 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
         '<linearGradient id="hgrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#' + theme.accent + '" stop-opacity="0.25"/><stop offset="100%" stop-color="#' + theme.accent + '" stop-opacity="0"/></linearGradient>' +
       '</defs>' +
       '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
-      // Header band
       '<rect width="' + W + '" height="240" fill="url(#hgrad)"/>' +
       '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
-      // Headline bg pill
       '<rect x="40" y="130" width="' + (W-80) + '" height="' + (headLines.length > 1 ? 145 : 80) + '" fill="#000" opacity="0.45" rx="8"/>' +
       '<rect x="40" y="130" width="6" height="' + (headLines.length > 1 ? 145 : 80) + '" fill="#' + theme.accent + '" rx="3"/>' +
       headEls +
       bulletSvg + bodyEls +
-      // Bottom bar
       '<rect y="' + (H-50) + '" width="' + W + '" height="50" fill="#000" opacity="0.6"/>' +
       '<text x="640" y="' + (H-18) + '" font-family="' + fontFamily + '" font-size="18" fill="#' + theme.sub + '" text-anchor="middle" opacity="0.8">Subscribe for daily tips</text>' +
       '</svg>';
   }
-
-  // Composite: background image (if available) + dark overlay SVG
-  var layers = [];
-  if (bgImagePath && require("fs").existsSync(bgImagePath)) {
-    layers.push({ input: bgImagePath, top: 0, left: 0 });
-  }
-  layers.push({ input: Buffer.from(svg), top: 0, left: 0 });
 
   var base = bgImagePath && require("fs").existsSync(bgImagePath)
     ? sharp(bgImagePath).resize(W, H, { fit: "cover", position: "centre" })
@@ -306,8 +269,6 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
     .png()
     .toFile(outputPath);
 }
-
-// ── SCRIPT → SLIDES ───────────────────────────────────────────────────────────
 
 function scriptToSlides(title, scriptText) {
   var slides = [{ type: "title", headline: title, sub: "Watch this before your competition does" }];
@@ -342,8 +303,6 @@ function scriptToSlides(title, scriptText) {
   return slides;
 }
 
-// ── MUSIC ─────────────────────────────────────────────────────────────────────
-
 function generateMusic(ffmpegPath, durationSecs, outputPath) {
   if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) return outputPath;
   try {
@@ -356,9 +315,6 @@ function generateMusic(ffmpegPath, durationSecs, outputPath) {
   return null;
 }
 
-// ── ELEVENLABS VOICEOVER ──────────────────────────────────────────────────────
-
-// Split text into chunks under 4800 chars at sentence boundaries
 function splitIntoChunks(text, maxChars) {
   if (text.length <= maxChars) return [text];
   var chunks = [];
@@ -376,7 +332,6 @@ function splitIntoChunks(text, maxChars) {
   return chunks;
 }
 
-// Call ElevenLabs for a single chunk
 function elevenLabsChunk(text, apiKey, voiceId) {
   var body = JSON.stringify({ text: text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
   return new Promise(function(resolve) {
@@ -409,11 +364,9 @@ function generateVoiceover(text, outputPath) {
   if (!apiKey || apiKey.length < 10) { console.log("     → No ElevenLabs key"); return Promise.resolve(null); }
   console.log("     → ElevenLabs key: " + apiKey.slice(0,8) + "... (" + apiKey.length + " chars)");
 
-  // Split full script into chunks — paid plan allows 5000 chars per call
   var chunks = splitIntoChunks(text, 4800);
   console.log("     → Voiceover: " + text.length + " chars split into " + chunks.length + " chunk(s)");
 
-  // Process all chunks sequentially, then concatenate audio buffers
   var promise = Promise.resolve([]);
   chunks.forEach(function(chunk, i) {
     promise = promise.then(function(buffers) {
@@ -429,38 +382,11 @@ function generateVoiceover(text, outputPath) {
     if (buffers.length === 0) { console.log("     → No audio generated"); return null; }
     var combined = Buffer.concat(buffers);
     fs.writeFileSync(outputPath, combined);
-    var durationEst = Math.round(combined.length / 16000); // rough estimate
+    var durationEst = Math.round(combined.length / 16000);
     console.log("     ✓ Voiceover generated (" + (combined.length/1024).toFixed(0) + "KB, ~" + durationEst + "s)");
     return outputPath;
   });
-
-  // Legacy single-call path kept below for reference — no longer used
-  var body = JSON.stringify({ text: text.slice(0,4800), model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
-  return new Promise(function(resolve) {
-    var req = https.request({
-      hostname: "api.elevenlabs.io", path: "/v1/text-to-speech/" + voiceId, method: "POST",
-      headers: { "xi-api-key": apiKey, "Content-Type": "application/json", "Accept": "audio/mpeg", "Content-Length": Buffer.byteLength(body) },
-    }, function(res) {
-      if (res.statusCode !== 200) {
-        var errBody = "";
-        res.on("data", function(d) { errBody += d; });
-        res.on("end", function() {
-          console.log("     → ElevenLabs HTTP " + res.statusCode + " | " + errBody.slice(0, 120));
-          resolve(null);
-        });
-        return;
-      }
-      var file = fs.createWriteStream(outputPath);
-      res.pipe(file);
-      file.on("finish", function() { file.close(); console.log("     ✓ Voiceover generated"); resolve(outputPath); });
-      file.on("error", function() { resolve(null); });
-    });
-    req.on("error", function(e) { console.log("     → ElevenLabs error: " + e.message); resolve(null); });
-    req.write(body); req.end();
-  });
 }
-
-// ── BUILD VIDEO ───────────────────────────────────────────────────────────────
 
 function buildVideo(title, scriptText, outputPath, theme) {
   var ffmpegPath = findFfmpeg();
@@ -474,7 +400,6 @@ function buildVideo(title, scriptText, outputPath, theme) {
   var slides = scriptToSlides(title, scriptText);
   console.log("     → Rendering " + slides.length + " slides (" + theme.name + " theme)...");
 
-  // Fetch one Pexels image per slide topic (in parallel, best-effort)
   var pexelsKey = process.env.PEXELS_API_KEY || (config.pexels_api_key || "");
   var imgDir = path.join(tmpDir, "imgs");
   fs.mkdirSync(imgDir, { recursive: true });
@@ -512,29 +437,15 @@ function buildVideo(title, scriptText, outputPath, theme) {
     var music     = generateMusic(ffmpegPath, totalSecs, musicPath);
     var voicePath = path.join(tmpDir, "voice.mp3");
 
-    // Send FULL script to ElevenLabs — chunked automatically for paid plans
-    // At ~15 chars/sec speech rate, 7000 chars = ~7.5 min, matching the ~10 min video
     console.log("     → Voiceover: " + scriptText.length + " chars (~" + Math.round(scriptText.length/15) + "s speech)");
     return generateVoiceover(scriptText, voicePath).then(function(voiceFile) {
       var mixed = false;
-
-      // ── AUDIO STRATEGY ─────────────────────────────────────────────────
-      // Goal: voice + music covering the ENTIRE video length, no cutoffs.
-      // - Voice is padded with silence at end if shorter than video (apad)
-      // - Music loops to fill full video duration
-      // - Both trimmed to exact video length with -t flag
-      // - Fallback chain: voice+music → voice only → music only → silent
-
-      var videoLen = totalSecs; // exact video duration in seconds
+      var videoLen = totalSecs;
       console.log("     → Video length: " + videoLen + "s | mixing audio to match...");
 
-      // Try voice + music — both stretched to cover full video
       if (voiceFile && music) {
         console.log("     → Mixing voice + music (full duration)...");
         try {
-          // [1:a] = voice: pad with silence to video length
-          // [2:a] = music: loop and trim to video length  
-          // amix duration=longest so music fills any gap after voice ends
           exec("\"" + ffmpegPath + "\" -y " +
             "-i \"" + videoPath + "\" " +
             "-i \"" + voiceFile + "\" " +
@@ -554,9 +465,7 @@ function buildVideo(title, scriptText, outputPath, theme) {
         } catch(e) { console.log("     → Voice+music mix err: " + e.message.slice(0,120)); }
       }
 
-      // Voice only — padded to full video length
       if (!mixed && voiceFile) {
-        console.log("     → Adding voiceover (full duration)...");
         try {
           exec("\"" + ffmpegPath + "\" -y " +
             "-i \"" + videoPath + "\" " +
@@ -572,9 +481,7 @@ function buildVideo(title, scriptText, outputPath, theme) {
         } catch(e) { console.log("     → Voice-only err: " + e.message.slice(0,120)); }
       }
 
-      // Music only — looped to full video length
       if (!mixed && music) {
-        console.log("     → Adding music only (full duration)...");
         try {
           exec("\"" + ffmpegPath + "\" -y " +
             "-stream_loop -1 -i \"" + videoPath + "\" " +
@@ -590,9 +497,7 @@ function buildVideo(title, scriptText, outputPath, theme) {
         } catch(e) { console.log("     → Music-only err: " + e.message.slice(0,120)); }
       }
 
-      // Silent fallback
       if (!mixed) {
-        console.log("     → Saving silent video");
         try { exec("\"" + ffmpegPath + "\" -y -i \"" + videoPath + "\" -c copy \"" + outputPath + "\"", { stdio: "pipe" }); }
         catch(e2) { return { status: "final_error" }; }
       }
@@ -604,8 +509,6 @@ function buildVideo(title, scriptText, outputPath, theme) {
     });
   });
 }
-
-// ── YOUTUBE UPLOAD ────────────────────────────────────────────────────────────
 
 function getAccessToken() {
   var cid = config.youtube.client_id, cs = config.youtube.client_secret, rt = config.youtube.refresh_token;
@@ -619,13 +522,8 @@ function getAccessToken() {
         res.on("end", function(){
           try {
             var r = JSON.parse(data);
-            if (r.access_token) {
-              console.log("     → Access token obtained");
-              resolve(r.access_token);
-            } else {
-              console.log("     → OAuth token error: " + JSON.stringify(r).slice(0,200));
-              reject(new Error("Token: " + JSON.stringify(r)));
-            }
+            if (r.access_token) { console.log("     → Access token obtained"); resolve(r.access_token); }
+            else { console.log("     → OAuth token error: " + JSON.stringify(r).slice(0,200)); reject(new Error("Token: " + JSON.stringify(r))); }
           } catch(e){ reject(e); }
         });
       });
@@ -643,13 +541,8 @@ function uploadThumbnail(videoId, thumbnailPath, accessToken) {
     }, function(res) {
       var body = ""; res.on("data", function(d){ body += d; });
       res.on("end", function(){
-        if (res.statusCode === 200 || res.statusCode === 204) {
-          console.log("     ✓ Custom thumbnail uploaded");
-          resolve(true);
-        } else {
-          console.log("     → Thumbnail HTTP " + res.statusCode + " | " + body.slice(0,120));
-          resolve(false);
-        }
+        if (res.statusCode === 200 || res.statusCode === 204) { console.log("     ✓ Custom thumbnail uploaded"); resolve(true); }
+        else { console.log("     → Thumbnail HTTP " + res.statusCode + " | " + body.slice(0,120)); resolve(false); }
       });
     });
     req.on("error", function(){ resolve(false); });
@@ -657,7 +550,6 @@ function uploadThumbnail(videoId, thumbnailPath, accessToken) {
   });
 }
 
-// ── INJECT STORE LINK INTO DESCRIPTION ───────────────────────────────────────
 function buildDescription(desc) {
   var storeUrl = process.env.RAILWAY_PUBLIC_DOMAIN
     ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN + "/store"
@@ -684,13 +576,9 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
       }, function(res) {
         var uploadUrl = res.headers.location;
         if (!uploadUrl) {
-          // Read error body to understand why YouTube rejected the init request
           var errBody = "";
           res.on("data", function(d){ errBody += d; });
-          res.on("end", function(){
-            console.log("     → YouTube init HTTP " + res.statusCode + " | " + errBody.slice(0,200));
-            resolve({ status: "error", message: "No upload URL (HTTP " + res.statusCode + ")" });
-          });
+          res.on("end", function(){ console.log("     → YouTube init HTTP " + res.statusCode + " | " + errBody.slice(0,200)); resolve({ status: "error", message: "No upload URL (HTTP " + res.statusCode + ")" }); });
           return;
         }
         console.log("     → Uploading to YouTube...");
@@ -723,8 +611,6 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
   }).catch(function(err){ return { status: "error", message: err.message }; });
 }
 
-// ── AI RESEARCH ───────────────────────────────────────────────────────────────
-
 function researchTopics(niche, usedTopics) {
   var avoidList = (usedTopics||[]).slice(-20).join(", ") || "none yet";
   return client.messages.create({
@@ -732,8 +618,7 @@ function researchTopics(niche, usedTopics) {
     messages: [{ role: "user", content:
       "Generate 5 UNIQUE YouTube video topics for a faceless channel in the \"" + niche + "\" niche.\n\n" +
       "ALREADY USED — do NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
-      "Requirements:\n" +
-      "- Use power words: Secret, Warning, Mistake, Exposed, Finally, Hack, Truth, Stop, Never\n" +
+      "Requirements:\n- Use power words: Secret, Warning, Mistake, Exposed, Finally, Hack, Truth, Stop, Never\n" +
       "- Include specific numbers: 5 Ways, 7 Mistakes, 3 Secrets\n" +
       "- Each topic must have a DIFFERENT angle: mistakes, tools, case study, warning, how-to, truth\n" +
       "- Titles must create strong curiosity to make people click\n\n" +
@@ -769,12 +654,10 @@ function generateScript(topic, niche, product_url) {
       "Niche: " + niche + "\n" +
       "Opening hook: \"" + (topic.hook || "What I am about to show you changes everything") + "\"\n" +
       "Product to mention once naturally mid-video: " + (product_url || "none") + "\n\n" +
-      "CRITICAL REQUIREMENTS:\n" +
-      "- Target: 1400-1600 words of SPOKEN narration (10 min at 150 words/min)\n" +
+      "CRITICAL REQUIREMENTS:\n- Target: 1400-1600 words of SPOKEN narration (10 min at 150 words/min)\n" +
       "- Write every word as it will be SPOKEN aloud — no bullet points, no headers visible to viewer\n" +
       "- Use ## only as section markers for the editor\n" +
-      "- Each section must have 2-4 full paragraphs of spoken content\n" +
-      "- Be conversational, specific, and story-driven\n\n" +
+      "- Each section must have 2-4 full paragraphs of spoken content\n- Be conversational, specific, and story-driven\n\n" +
       "STRUCTURE — use ## for each section header:\n" +
       "## HOOK (0:00-0:45) — 2 paragraphs, pattern interrupt opening\n" +
       "## INTRO (0:45-2:00) — 2 paragraphs, set up the problem\n" +
@@ -830,17 +713,16 @@ function getGrowthStatus() {
   return { videos_created: videos.length, videos_uploaded: videos.filter(function(v){ return v.status==="uploaded"; }).length };
 }
 
-// ── YOUTUBE SHORTS ───────────────────────────────────────────────────────────
+// ── YOUTUBE SHORTS ────────────────────────────────────────────────────────────
+// FIX APPLIED: Corrected ffmpeg scale filter for proper 9:16 vertical conversion
 
 function buildShort(longVideoPath, ffmpegPath, outputPath) {
-  // Clip first 55s + crop to 9:16 vertical (1080x1920) from center of 1280x720
-  // YouTube auto-detects Shorts from aspect ratio + duration under 60s
   try {
     require("child_process").execSync(
       "\"" + ffmpegPath + "\" -y " +
       "-i \"" + longVideoPath + "\" " +
       "-t 55 " +
-      "-vf \"scale=1080:608,pad=1080:1920:0:656:black\" " +
+      "-vf \"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black\" " +
       "-c:v libx264 -pix_fmt yuv420p -preset ultrafast -crf 28 " +
       "-c:a aac -b:a 96k " +
       "\"" + outputPath + "\"",
@@ -861,7 +743,6 @@ function uploadShort(shortVideoPath, longTitle, tags, accessToken) {
   if (!shortVideoPath || !fs.existsSync(shortVideoPath)) return Promise.resolve(null);
   var shortTitle = ("#Shorts " + longTitle).slice(0, 100);
   var shortDesc  = buildDescription("Watch the full video on our channel for the complete breakdown.") + "\n\n#Shorts #" + (tags[0]||"tips").replace(/[^a-zA-Z0-9]/g,"");
-
 
   var initBody = JSON.stringify({
     snippet: { title: shortTitle, description: shortDesc, tags: (tags||[]).concat(["Shorts","short","youtube shorts"]).slice(0,15), categoryId: "27" },
@@ -891,13 +772,8 @@ function uploadShort(shortVideoPath, longTitle, tags, accessToken) {
           upRes.on("end", function() {
             try {
               var r = JSON.parse(d);
-              if (r.id) {
-                console.log("     ✓ Short uploaded! https://youtube.com/shorts/" + r.id);
-                resolve({ id: r.id, url: "https://youtube.com/shorts/" + r.id });
-              } else {
-                console.log("     → Short upload response: " + d.slice(0, 100));
-                resolve(null);
-              }
+              if (r.id) { console.log("     ✓ Short uploaded! https://youtube.com/shorts/" + r.id); resolve({ id: r.id, url: "https://youtube.com/shorts/" + r.id }); }
+              else { console.log("     → Short upload response: " + d.slice(0, 100)); resolve(null); }
             } catch(e) { resolve(null); }
           });
         }
@@ -912,8 +788,6 @@ function uploadShort(shortVideoPath, longTitle, tags, accessToken) {
   });
 }
 
-// ── MAIN RUN ──────────────────────────────────────────────────────────────────
-
 function run(niche, product_url) {
   console.log("\n  📹 YouTube Module running...");
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -925,7 +799,6 @@ function run(niche, product_url) {
   var topicData, scriptText, metaData, videoDir;
 
   return researchTopics(niche, usedTopics).then(function(topics) {
-    // Pick first topic not similar to already-used ones
     topicData = topics[0];
     for (var i = 0; i < topics.length; i++) {
       var t = topics[i].title.toLowerCase();
@@ -969,15 +842,13 @@ function run(niche, product_url) {
         log[log.length-1].youtube_url = uploadResult.url;
         fs.writeFileSync(logFile, JSON.stringify(log,null,2));
       }
-      // ── UPLOAD SHORT ──────────────────────────────────────────────────
       var ffmpegPath2 = findFfmpeg();
-      // Use the actual final output path from buildVideo result
       var longVidPath = videoResult.path || path.join(videoDir, "video.mp4");
       var shortPath   = path.join(process.cwd(), "tmp", "short_" + Date.now() + ".mp4");
       fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
       var videoExists = fs.existsSync(longVidPath) && fs.statSync(longVidPath).size > 100000;
       console.log("     → Building Short from: " + longVidPath + " (exists: " + videoExists + ")");
-      var shortFile   = (ffmpegPath2 && videoExists) ? buildShort(longVidPath, ffmpegPath2, shortPath) : null;
+      var shortFile = (ffmpegPath2 && videoExists) ? buildShort(longVidPath, ffmpegPath2, shortPath) : null;
       if (!shortFile && ffmpegPath2) console.log("     → Short skipped: " + (videoExists ? "ffmpeg failed" : "video not found"));
       var shortUpload = Promise.resolve(null);
       if (shortFile && uploadResult.status === "success") {
