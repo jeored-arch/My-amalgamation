@@ -840,7 +840,7 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
       "\"" + ffmpegPath + "\" -y " +
       "-i \"" + longVideoPath + "\" " +
       "-t 55 " +
-      "-vf \"crop=in_h*9/16:in_h:(in_w-in_h*9/16)/2:0,scale=1080:1920\" " +
+      "-vf \"scale=1080:608,pad=1080:1920:0:656:black\" " +
       "-c:v libx264 -pix_fmt yuv420p -preset ultrafast -crf 28 " +
       "-c:a aac -b:a 96k " +
       "\"" + outputPath + "\"",
