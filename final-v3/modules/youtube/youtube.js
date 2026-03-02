@@ -810,7 +810,7 @@ function generateMetadata(topic, niche) {
 function saveVideoPackage(topic, script, metadata) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  var slug     = topic.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").slice(0,50);
+  var slug     = topic.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").slice(0,30);
   var videoDir = path.join(OUT_DIR, slug);
   fs.mkdirSync(videoDir, { recursive: true });
   fs.writeFileSync(path.join(videoDir,"script.txt"), script);
@@ -971,11 +971,13 @@ function run(niche, product_url) {
       }
       // ── UPLOAD SHORT ──────────────────────────────────────────────────
       var ffmpegPath2 = findFfmpeg();
-      var longVidPath = path.join(videoDir, "video.mp4");
+      // Use the actual final output path from buildVideo result
+      var longVidPath = videoResult.path || path.join(videoDir, "video.mp4");
       var shortPath   = path.join(videoDir, "short.mp4");
-      console.log("     → Building Short from: " + longVidPath);
-      var shortFile   = (ffmpegPath2 && fs.existsSync(longVidPath)) ? buildShort(longVidPath, ffmpegPath2, shortPath) : null;
-      if (!shortFile && ffmpegPath2) console.log("     → Short skipped: video not found at " + longVidPath);
+      var videoExists = fs.existsSync(longVidPath) && fs.statSync(longVidPath).size > 100000;
+      console.log("     → Building Short from: " + longVidPath + " (exists: " + videoExists + ")");
+      var shortFile   = (ffmpegPath2 && videoExists) ? buildShort(longVidPath, ffmpegPath2, shortPath) : null;
+      if (!shortFile && ffmpegPath2) console.log("     → Short skipped: " + (videoExists ? "ffmpeg failed" : "video not found"));
       var shortUpload = Promise.resolve(null);
       if (shortFile && uploadResult.status === "success") {
         shortUpload = getAccessToken().then(function(tok) {
