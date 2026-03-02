@@ -852,7 +852,7 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
       return outputPath;
     }
   } catch(e) {
-    console.log("     → Short build err: " + e.message.slice(0, 100));
+    console.log("     → Short build err: " + e.message.slice(0, 300));
   }
   return null;
 }
@@ -971,8 +971,11 @@ function run(niche, product_url) {
       }
       // ── UPLOAD SHORT ──────────────────────────────────────────────────
       var ffmpegPath2 = findFfmpeg();
+      var longVidPath = path.join(videoDir, "video.mp4");
       var shortPath   = path.join(videoDir, "short.mp4");
-      var shortFile   = ffmpegPath2 ? buildShort(path.join(videoDir,"video.mp4"), ffmpegPath2, shortPath) : null;
+      console.log("     → Building Short from: " + longVidPath);
+      var shortFile   = (ffmpegPath2 && fs.existsSync(longVidPath)) ? buildShort(longVidPath, ffmpegPath2, shortPath) : null;
+      if (!shortFile && ffmpegPath2) console.log("     → Short skipped: video not found at " + longVidPath);
       var shortUpload = Promise.resolve(null);
       if (shortFile && uploadResult.status === "success") {
         shortUpload = getAccessToken().then(function(tok) {
