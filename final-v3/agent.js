@@ -19,6 +19,7 @@ const brain     = require("./core/brain");
 const heal      = require("./core/self-healing");
 const products  = require("./core/product-engine");
 const store     = require("./core/store");
+const pinterest = require("./modules/pinterest/pinterest");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -254,6 +255,23 @@ async function main() {
     console.log("     → Stack: " + e.stack?.slice(0,200));
   }
 
+  // ── PINTEREST ─────────────────────────────────────────────────────────
+  try {
+    const pinterestResult = await pinterest.run(
+      currentNiche,
+      videoUrl,
+      videoTitle,
+      state.product_url,
+      null
+    );
+    if (pinterestResult.status === "complete") {
+      const pinCount = (pinterestResult.video_pin ? 1 : 0) + (pinterestResult.product_pin ? 1 : 0);
+      if (pinCount > 0) ok(`Pinterest: ${pinCount} pin(s) live`);
+    }
+  } catch(e) {
+    console.log("     → Pinterest: " + e.message.slice(0, 100));
+  }
+
   // ── PRODUCTS ──────────────────────────────────────────────────────────
   console.log(c("cyan","\n  🏭 Product creation..."));
   try {
@@ -381,7 +399,8 @@ async function main() {
     `  Videos:     ${state.videos_built} uploaded\n` +
     `  Brain:      ${brainFinal.total_videos} tracked | ${brainFinal.best_angle||"learning"} winning\n` +
     `  Products:   ${prodStats.products_created} created\n` +
-    `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n`
+    `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n` +
+    `  Pinterest:  ${pinterest.getStats().total_pins} total pins\n`
   );
 }
 
