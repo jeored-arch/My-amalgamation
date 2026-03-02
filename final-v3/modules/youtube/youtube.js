@@ -973,7 +973,8 @@ function run(niche, product_url) {
       var ffmpegPath2 = findFfmpeg();
       // Use the actual final output path from buildVideo result
       var longVidPath = videoResult.path || path.join(videoDir, "video.mp4");
-      var shortPath   = path.join(videoDir, "short.mp4");
+      var shortPath   = path.join(process.cwd(), "tmp", "short_" + Date.now() + ".mp4");
+      fs.mkdirSync(path.join(process.cwd(), "tmp"), { recursive: true });
       var videoExists = fs.existsSync(longVidPath) && fs.statSync(longVidPath).size > 100000;
       console.log("     → Building Short from: " + longVidPath + " (exists: " + videoExists + ")");
       var shortFile   = (ffmpegPath2 && videoExists) ? buildShort(longVidPath, ffmpegPath2, shortPath) : null;
