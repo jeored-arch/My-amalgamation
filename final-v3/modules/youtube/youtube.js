@@ -53,9 +53,36 @@ function findFfmpeg() {
 
 function getUsedTopics() {
   var logFile = path.join(DATA_DIR, "videos.json");
-  if (!fs.existsSync(logFile)) return [];
-  try { return JSON.parse(fs.readFileSync(logFile, "utf8")).map(function(v) { return (v.title || "").toLowerCase(); }); }
-  catch(e) { return []; }
+  // Also check a persistent seed file that survives Railway restarts
+  var seedFile = path.join(process.cwd(), "data", "topic-seed.json");
+  var used = [];
+  if (fs.existsSync(logFile)) {
+    try { used = JSON.parse(fs.readFileSync(logFile, "utf8")).map(function(v) { return (v.title || "").toLowerCase(); }); } catch(e) {}
+  }
+  if (fs.existsSync(seedFile)) {
+    try {
+      var seed = JSON.parse(fs.readFileSync(seedFile, "utf8"));
+      used = used.concat(seed.used_titles || []);
+    } catch(e) {}
+  }
+  return used;
+}
+
+function persistTopicSeed(title) {
+  var seedFile = path.join(process.cwd(), "data", "topic-seed.json");
+  var data = { used_titles: [] };
+  if (fs.existsSync(seedFile)) {
+    try { data = JSON.parse(fs.readFileSync(seedFile, "utf8")); } catch(e) {}
+  }
+  if (!data.used_titles) data.used_titles = [];
+  var lower = title.toLowerCase();
+  if (!data.used_titles.includes(lower)) {
+    data.used_titles.push(lower);
+    // Keep last 100 to avoid file bloat
+    if (data.used_titles.length > 100) data.used_titles = data.used_titles.slice(-100);
+    fs.mkdirSync(path.join(process.cwd(), "data"), { recursive: true });
+    fs.writeFileSync(seedFile, JSON.stringify(data, null, 2));
+  }
 }
 
 // ── SVG HELPERS ───────────────────────────────────────────────────────────────
@@ -102,23 +129,88 @@ function makeThumbnail(title, theme, outputPath) {
   try { sharp = require("sharp"); } catch(e) { return Promise.resolve(null); }
   var W = 1280, H = 720;
   var bg = hexToRgb(theme.bg);
-  var words = title.replace(/[^a-zA-Z0-9 ]/g,"").split(" ");
-  var line1 = words.slice(0,3).join(" ").toUpperCase();
-  var line2 = words.slice(3,6).join(" ").toUpperCase();
-  var badge = title.match(/\d+/);
-  var badgeNum = badge ? badge[0] : null;
+
+  // Extract number badge (e.g. "7" from "7 Mistakes")
+  var numMatch = title.match(/\b(\d+)\b/);
+  var badgeNum = numMatch ? numMatch[1] : null;
+
+  // Stop words to skip in big headline display
+  var stopRx = /^(the|and|for|with|that|this|are|was|you|your|how|why|what|when|from|have|will|they|about|these|those|into|also|than|then|more|most|just|been|some|over|such|after|before|every|each|both|while|its|not|but|can|all|get|do|of|in|on|to|a|an|i|so|my)$/i;
+
+  // Prioritize power words for the thumbnail — these drive clicks
+  var POWER = ["STOP","NEVER","SECRET","WARNING","TRUTH","HACK","MISTAKE","MISTAKES","FREE","EXPOSED","FINALLY","QUIT","BROKE","RICH","FIRED","DONE","REAL","FAKE","LIES","DEAD"];
+  var allWords = title.replace(/[^a-zA-Z0-9 ]/g," ").trim().split(/\s+/);
+
+  // Pick the best 4-6 words: power words first, then meaningful non-stop words
+  var powerFound = allWords.filter(function(w){ return POWER.includes(w.toUpperCase()); });
+  var meaningfulWords = allWords.filter(function(w){
+    return w.length > 3 && !stopRx.test(w) && !POWER.includes(w.toUpperCase()) && !/^\d+$/.test(w);
+  });
+  var displayWords = powerFound.concat(meaningfulWords).slice(0, 6);
+
+  // Split into 2-3 short lines — max 10 chars per line for readability
+  function buildLines(words) {
+    var lines = [], cur = "";
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i].toUpperCase();
+      var test = cur ? cur + " " + w : w;
+      if (test.length > 11 && cur) { lines.push(cur); cur = w; }
+      else cur = test;
+      if (lines.length >= 2 && cur) { lines.push(cur); break; }
+    }
+    if (cur && lines.length < 3) lines.push(cur);
+    return lines.slice(0, 3);
+  }
+  var headLines = buildLines(displayWords);
+  var line1 = headLines[0] || "";
+  var line2 = headLines[1] || "";
+  var line3 = headLines[2] || "";
+
+  // Font size scales down for longer lines
+  function fontSize(line, base) { return line.length > 9 ? Math.round(base * 0.72) : line.length > 6 ? Math.round(base * 0.88) : base; }
+
+  // Subtitle — full title, truncated cleanly at word boundary
+  var subtitle = title;
+  if (subtitle.length > 62) {
+    subtitle = subtitle.slice(0, 59);
+    var lastSpace = subtitle.lastIndexOf(" ");
+    if (lastSpace > 40) subtitle = subtitle.slice(0, lastSpace);
+    subtitle += "...";
+  }
 
   var svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
-    '<rect width="' + W + '" height="' + H + '" fill="#' + theme.bg + '"/>' +
-    '<rect width="' + W + '" height="' + H + '" fill="#' + theme.accent + '" opacity="0.06"/>' +
-    '<rect width="18" height="' + H + '" fill="#' + theme.accent + '"/>' +
-    '<rect y="' + (H-120) + '" width="' + W + '" height="120" fill="#000000" opacity="0.72"/>' +
-    (badgeNum ? '<circle cx="' + (W-110) + '" cy="110" r="90" fill="#' + theme.accent + '" opacity="0.95"/><text x="' + (W-110) + '" y="132" font-family="Arial,sans-serif" font-size="80" font-weight="bold" fill="white" text-anchor="middle">' + safeXml(badgeNum,3) + '</text>' : '') +
-    '<text x="50" y="310" font-family="Arial,Helvetica,sans-serif" font-size="' + (line1.length > 10 ? "90" : "115") + '" font-weight="bold" fill="white" letter-spacing="1">' + safeXml(line1,14) + '</text>' +
-    (line2 ? '<text x="50" y="' + (line2.length > 10 ? "418" : "438") + '" font-family="Arial,Helvetica,sans-serif" font-size="' + (line2.length > 10 ? "82" : "105") + '" font-weight="bold" fill="#' + theme.accent + '" letter-spacing="1">' + safeXml(line2,14) + '</text>' : '') +
-    '<text x="50" y="' + (H-45) + '" font-family="Arial,Helvetica,sans-serif" font-size="26" fill="#cccccc">' + safeXml(title,72) + '</text>' +
-    '<circle cx="' + (W-28) + '" cy="' + (H-28) + '" r="8" fill="#' + theme.accent + '" opacity="0.6"/>' +
-    '<circle cx="' + (W-52) + '" cy="' + (H-28) + '" r="5" fill="#' + theme.accent + '" opacity="0.35"/>' +
+    '<defs>' +
+      '<filter id="textglow"><feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#' + theme.accent + '" flood-opacity="0.6"/></filter>' +
+      '<filter id="shadow"><feDropShadow dx="3" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.9"/></filter>' +
+      '<linearGradient id="bggrad" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop offset="0%" stop-color="#' + theme.bg + '"/>' +
+        '<stop offset="100%" stop-color="#0a0a0a"/>' +
+      '</linearGradient>' +
+      '<linearGradient id="stripe" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="#' + theme.accent + '" stop-opacity="1"/>' +
+        '<stop offset="100%" stop-color="#' + theme.accent + '" stop-opacity="0.3"/>' +
+      '</linearGradient>' +
+    '</defs>' +
+    // Background
+    '<rect width="' + W + '" height="' + H + '" fill="url(#bggrad)"/>' +
+    // Diagonal accent shape
+    '<polygon points="0,0 480,0 380,' + H + ' 0,' + H + '" fill="#' + theme.accent + '" opacity="0.08"/>' +
+    // Left accent bar
+    '<rect width="12" height="' + H + '" fill="url(#stripe)"/>' +
+    // Number badge (if exists) — big and bold
+    (badgeNum ? (
+      '<circle cx="1140" cy="130" r="110" fill="#' + theme.accent + '" opacity="0.15"/>' +
+      '<circle cx="1140" cy="130" r="95" fill="#' + theme.accent + '" opacity="0.25"/>' +
+      '<text x="1140" y="160" font-family="Arial,sans-serif" font-size="' + (badgeNum.length > 1 ? "100" : "120") + '" font-weight="bold" fill="white" text-anchor="middle" filter="url(#textglow)">' + safeXml(badgeNum,3) + '</text>'
+    ) : "") +
+    // Main headline — dynamic font size based on word length
+    '<text x="60" y="220" font-family="Arial Black,Arial,sans-serif" font-size="' + fontSize(line1,140) + '" font-weight="bold" fill="white" filter="url(#shadow)" letter-spacing="-1">' + safeXml(line1, 12) + '</text>' +
+    (line2 ? '<text x="60" y="' + (220 + fontSize(line1,140) + 10) + '" font-family="Arial Black,Arial,sans-serif" font-size="' + fontSize(line2,132) + '" font-weight="bold" fill="#' + theme.accent + '" filter="url(#textglow)" letter-spacing="-1">' + safeXml(line2, 12) + '</text>' : "") +
+    (line3 ? '<text x="60" y="' + (220 + fontSize(line1,140) + 10 + fontSize(line2,132) + 14) + '" font-family="Arial Black,Arial,sans-serif" font-size="' + fontSize(line3,118) + '" font-weight="bold" fill="white" filter="url(#shadow)" letter-spacing="-1">' + safeXml(line3, 12) + '</text>' : "") +
+    // Bottom subtitle bar
+    '<rect x="0" y="' + (H-90) + '" width="' + W + '" height="90" fill="#000" opacity="0.78"/>' +
+    '<rect x="0" y="' + (H-90) + '" width="6" height="90" fill="#' + theme.accent + '"/>' +
+    '<text x="30" y="' + (H-30) + '" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="#' + theme.sub + '" font-weight="bold">' + safeXml(subtitle, 80) + '</text>' +
     '</svg>';
 
   return sharp({ create: { width: W, height: H, channels: 3, background: bg } })
@@ -725,20 +817,54 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
 
 // ── AI RESEARCH ───────────────────────────────────────────────────────────────
 
+// Rotating niche expansions — keeps content fresh across related topics
+var NICHE_ANGLES = [
+  "personal finance tips",
+  "passive income strategies",
+  "AI productivity tools",
+  "small business automation",
+  "side hustle ideas",
+  "investing for beginners",
+  "credit score improvement",
+  "digital product business",
+  "freelancing and consulting",
+  "online business systems",
+];
+
+function getRotatingNiche(baseNiche, usedCount) {
+  // Every 3 videos, rotate to a related angle for variety
+  if (usedCount > 0 && usedCount % 3 === 0) {
+    var idx = Math.floor(usedCount / 3) % NICHE_ANGLES.length;
+    return NICHE_ANGLES[idx];
+  }
+  return baseNiche;
+}
+
 function researchTopics(niche, usedTopics) {
-  var avoidList = (usedTopics||[]).slice(-20).join(", ") || "none yet";
+  var avoidList = (usedTopics||[]).slice(-30).join(", ") || "none yet";
+  var activeNiche = getRotatingNiche(niche, (usedTopics||[]).length);
   return client.messages.create({
-    model: config.anthropic.model, max_tokens: 1200,
+    model: config.anthropic.model, max_tokens: 1500,
     messages: [{ role: "user", content:
-      "Generate 5 UNIQUE YouTube video topics for a faceless channel in the \"" + niche + "\" niche.\n\n" +
-      "ALREADY USED — do NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
-      "Requirements:\n" +
-      "- Use power words: Secret, Warning, Mistake, Exposed, Finally, Hack, Truth, Stop, Never\n" +
-      "- Include specific numbers: 5 Ways, 7 Mistakes, 3 Secrets\n" +
-      "- Each topic must have a DIFFERENT angle: mistakes, tools, case study, warning, how-to, truth\n" +
-      "- Titles must create strong curiosity to make people click\n\n" +
-      "Return ONLY a JSON array, no markdown:\n" +
-      "[{\"title\":\"7 AI Tool Mistakes Killing Your Productivity (Fix These Now)\",\"hook\":\"Most small business owners waste 3 hours daily on tasks AI does in seconds\",\"angle\":\"mistakes\"}]"
+      "You are a top YouTube strategist. Generate 8 HIGH-PERFORMING video topics for a faceless YouTube channel about \"" + activeNiche + "\"\n\n" +
+      "ALREADY USED — DO NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
+      "PROVEN VIRAL FORMULAS — use these structures:\n" +
+      "1. \"I Did X for 30 Days — Here\'s What Happened\"\n" +
+      "2. \"The [Number] [Niche] Mistakes That Cost Me $[Amount]\"\n" +
+      "3. \"Nobody Talks About This [Topic] Strategy (But It Works)\"\n" +
+      "4. \"[Number] Things I Wish I Knew Before [Starting X]\"\n" +
+      "5. \"The Truth About [Popular Belief] (This Changes Everything)\"\n" +
+      "6. \"How I Made $[Amount] With Zero [Common Requirement]\"\n" +
+      "7. \"Stop [Common Advice] — Do This Instead\"\n" +
+      "8. \"[Number] Signs You\'re [Negative Outcome] (And How to Fix It)\"\n\n" +
+      "REQUIREMENTS:\n" +
+      "- Every title must create IMMEDIATE curiosity or fear of missing out\n" +
+      "- Include specific numbers and dollar amounts where natural\n" +
+      "- Each must have a UNIQUE angle — no two topics can be similar\n" +
+      "- Angles must vary: mistakes, case-study, warning, how-to, truth-bomb, list, story\n" +
+      "- Titles 50-80 chars — punchy, not clickbait\n\n" +
+      "Return ONLY a JSON array:\n" +
+      "[{\"title\":\"I Tried 47 AI Tools So You Don\'t Have To (Here\'s What Works)\",\"hook\":\"After 6 months and $3,000 testing every major AI tool, I found only 5 worth paying for\",\"angle\":\"case-study\",\"niche\":\"" + activeNiche + "\"}]"
     }],
   }).then(function(res) {
     var text = res.content[0].text.trim().replace(/```json/g,"").replace(/```/g,"").trim();
@@ -748,13 +874,16 @@ function researchTopics(niche, usedTopics) {
   }).catch(function() {
     var day = new Date().getDate() + (usedTopics||[]).length;
     var fallbacks = [
-      { title: "7 AI Tools That Replace Expensive Employees in 2025", hook: "Why pay $50k when AI does it for $20 a month", angle: "tools" },
-      { title: "The 3 Biggest Mistakes New Entrepreneurs Make With AI", hook: "I made all 3 and it cost me 6 months", angle: "mistakes" },
-      { title: "5 Ways AI Is Quietly Replacing Small Business Owners", hook: "This is happening right now — adapt or fall behind", angle: "warning" },
-      { title: "How I Automated My Entire Business in 30 Days With AI", hook: "This system runs my business while I sleep", angle: "case-study" },
-      { title: "The Truth About AI Business Tools Nobody Tells You", hook: "After testing 47 tools here is what actually works", angle: "truth" },
-      { title: "Stop Wasting Money on These 5 Business Tools (Use AI Instead)", hook: "I canceled $800 in subscriptions using free AI", angle: "savings" },
-      { title: "3 Secrets Top Entrepreneurs Use to Work 4 Hours a Day", hook: "This is not passive income hype — it actually works", angle: "secrets" },
+      { title: "I Tried Every AI Tool for 30 Days — Honest Results", hook: "Most tools are overhyped. Here are the 5 that actually changed my business", angle: "case-study" },
+      { title: "The Credit Score Mistake That Cost Me 2 Years", hook: "One decision set my credit back 24 months — here is what not to do", angle: "story" },
+      { title: "7 Passive Income Streams Ranked From Easiest to Hardest", hook: "I have tried all 7. Only 3 actually scale without burning you out", angle: "list" },
+      { title: "Nobody Talks About This AI Productivity Strategy", hook: "Top 1% of entrepreneurs use this daily. Everyone else is still doing it manually", angle: "secrets" },
+      { title: "Stop Taking This Money Advice — Do This Instead", hook: "The most popular personal finance tip is actually holding most people back", angle: "truth-bomb" },
+      { title: "How I Built a $29 Digital Product in One Afternoon", hook: "No audience, no ads, no experience — just a simple system anyone can copy", angle: "how-to" },
+      { title: "5 Signs Your Business Will Fail in 12 Months", hook: "I have seen hundreds of businesses. These warning signs show up every time", angle: "warning" },
+      { title: "The Beginner Investing Mistakes I Made So You Don\'t Have To", hook: "I lost $4,000 in my first year investing. Here is exactly what went wrong", angle: "mistakes" },
+      { title: "3 AI Automations That Run My Business While I Sleep", hook: "Set these up once and they work 24 hours a day — no monthly fees", angle: "tools" },
+      { title: "What 1 Year of Daily YouTube Did to My Income", hook: "The honest numbers — what worked, what failed, and what I would do differently", angle: "case-study" },
     ];
     return [fallbacks[day % fallbacks.length]];
   });
@@ -762,48 +891,105 @@ function researchTopics(niche, usedTopics) {
 
 function generateScript(topic, niche, product_url) {
   return client.messages.create({
-    model: config.anthropic.model, max_tokens: 4000,
-    system: "You are an expert YouTube scriptwriter. Your scripts get 70%+ retention because of powerful hooks, curiosity gaps, and clear value delivery. ALWAYS write full spoken narration — never use bullet points in the script body.",
+    model: config.anthropic.model, max_tokens: 4096,
+    system: "You are a top-tier YouTube scriptwriter who has written for channels with 500K-2M subscribers. Your scripts are known for:\n" +
+      "1. PATTERN INTERRUPT hooks that stop the scroll in the first 7 seconds\n" +
+      "2. Open loops that keep viewers watching (tease what\'s coming)\n" +
+      "3. Storytelling with specific details — real numbers, real situations\n" +
+      "4. Conversational pacing — sounds natural when spoken aloud\n" +
+      "5. Strategic curiosity gaps every 60-90 seconds\n" +
+      "NEVER use bullet points in the spoken narration. NEVER sound corporate or stiff.",
     messages: [{ role: "user", content:
-      "Write a FULL 10-minute YouTube narration script for: \"" + topic.title + "\"\n" +
+      "Write a complete 10-12 minute YouTube script for: \"" + topic.title + "\"\n" +
       "Niche: " + niche + "\n" +
-      "Opening hook: \"" + (topic.hook || "What I am about to show you changes everything") + "\"\n" +
-      "Product to mention once naturally mid-video: " + (product_url || "none") + "\n\n" +
-      "CRITICAL REQUIREMENTS:\n" +
-      "- Target: 1400-1600 words of SPOKEN narration (10 min at 150 words/min)\n" +
-      "- Write every word as it will be SPOKEN aloud — no bullet points, no headers visible to viewer\n" +
-      "- Use ## only as section markers for the editor\n" +
-      "- Each section must have 2-4 full paragraphs of spoken content\n" +
-      "- Be conversational, specific, and story-driven\n\n" +
-      "STRUCTURE — use ## for each section header:\n" +
-      "## HOOK (0:00-0:45) — 2 paragraphs, pattern interrupt opening\n" +
-      "## INTRO (0:45-2:00) — 2 paragraphs, set up the problem\n" +
-      "## 1. [First Point] (2:00-3:30) — 3 paragraphs with example\n" +
-      "## 2. [Second Point] (3:30-5:00) — 3 paragraphs with example\n" +
-      "## 3. [Third Point] (5:00-6:30) — 3 paragraphs with example\n" +
-      "## 4. [Fourth Point] (6:30-7:30) — 2 paragraphs\n" +
-      "## 5. [Fifth Point] (7:30-8:30) — 2 paragraphs\n" +
-      "## KEY TAKEAWAY (8:30-9:30) — 2 paragraphs summarizing\n" +
-      "## CTA (9:30-10:00) — subscribe + product mention if applicable\n\n" +
-      "Write the complete script now. Do not summarize or cut short."
+      "Angle: " + (topic.angle || "educational") + "\n" +
+      "Opening hook line: \"" + (topic.hook || "What I am about to show you changes everything") + "\"\n" +
+      (product_url ? "Mention this resource ONCE naturally around the 7-minute mark: " + product_url + "\n" : "") +
+      "\nCRITICAL SCRIPT REQUIREMENTS:\n" +
+      "- 1500-1800 words of pure SPOKEN narration\n" +
+      "- First 30 seconds must be a PATTERN INTERRUPT — say something surprising, bold, or counterintuitive\n" +
+      "- Use ## only as invisible section markers — viewers never see these\n" +
+      "- Write like you are talking to ONE person — use \'you\' constantly\n" +
+      "- Include at least 2 OPEN LOOPS: tease something coming up to keep them watching\n" +
+      "- Use specific numbers, dollar amounts, timeframes — vague claims lose viewers\n" +
+      "- Every section needs a mini-story or real example\n" +
+      "- Transitions must flow naturally — no \'moving on\' or \'next point\'\n\n" +
+      "STRUCTURE:\n" +
+      "## HOOK (0:00-0:30)\n" +
+      "Start MID-STORY or with a bold statement. No \'Hey guys welcome back\'. Drop them straight into the most interesting moment.\n\n" +
+      "## OPEN LOOP 1 + INTRO (0:30-1:30)\n" +
+      "Establish credibility, tease 2-3 things they will learn, create anticipation.\n\n" +
+      "## POINT 1 (1:30-3:30)\n" +
+      "Deep dive with story, specific example, and takeaway. Include a mini open loop.\n\n" +
+      "## POINT 2 (3:30-5:30)\n" +
+      "Build on point 1. Real numbers and outcomes. Keep energy up.\n\n" +
+      "## POINT 3 (5:30-7:30)\n" +
+      "Most valuable insight. This is where viewers decide to subscribe.\n" +
+      (product_url ? "Natural resource mention here.\n" : "") + "\n" +
+      "## POINT 4 + 5 (7:30-9:30)\n" +
+      "Momentum section — faster pace, quick wins, build to the conclusion.\n\n" +
+      "## CLOSE (9:30-10:30)\n" +
+      "Callback to the hook, key takeaway in one sentence, subscribe CTA that feels earned not begged.\n\n" +
+      "Write the COMPLETE script now. Every word spoken. Nothing summarized."
     }],
   }).then(function(res){ return res.content[0].text; });
 }
 
 function generateMetadata(topic, niche) {
   return client.messages.create({
-    model: config.anthropic.model, max_tokens: 800,
+    model: config.anthropic.model, max_tokens: 1400,
     messages: [{ role: "user", content:
-      "YouTube SEO for: \"" + topic.title + "\" (niche: " + niche + ")\nReturn ONLY JSON:\n" +
-      "{\"title\":\"max 90 chars with power words\",\"description\":\"200+ words: hook first, then what video covers, timestamps, subscribe CTA\",\"tags\":[\"15 specific tags\"],\"category\":\"27\"}"
+      "You are a YouTube SEO expert. Create fully optimized metadata for this video.\n\n" +
+      "Video title: \"" + topic.title + "\"\n" +
+      "Niche: " + niche + "\n" +
+      "Angle: " + (topic.angle || "educational") + "\n\n" +
+      "TITLE RULES:\n" +
+      "- 60-80 characters (YouTube shows ~60 in search)\n" +
+      "- Front-load the most important keyword\n" +
+      "- Keep the emotional hook from the original title\n" +
+      "- Never truncate mid-word\n\n" +
+      "DESCRIPTION RULES:\n" +
+      "- First 2 lines (157 chars) are what shows in search — make them count\n" +
+      "- Line 1: bold hook that matches the thumbnail promise\n" +
+      "- Line 2: exactly what they will learn\n" +
+      "- Then: 3-5 sentence summary of video content\n" +
+      "- Then: timestamps section (use realistic times like 0:00, 1:30, 3:00, etc.)\n" +
+      "- Then: 3-4 relevant hashtags\n" +
+      "- End with: subscribe CTA\n" +
+      "- Total: 300-500 words\n\n" +
+      "TAGS RULES:\n" +
+      "- 20 tags total\n" +
+      "- Mix: 5 broad tags, 10 specific long-tail tags, 5 trending related tags\n" +
+      "- Include exact match of video title as first tag\n" +
+      "- Include niche keyword variations\n" +
+      "- Include year (2025, 2026) in at least 2 tags\n" +
+      "- No spaces within individual tags — use hyphens if needed\n\n" +
+      "Return ONLY valid JSON, no markdown:\n" +
+      "{\"title\":\"optimized title here\",\"description\":\"full description here\",\"tags\":[\"tag1\",\"tag2\"],\"category\":\"27\"}"
     }],
   }).then(function(res) {
     var text = res.content[0].text.trim().replace(/```json/g,"").replace(/```/g,"").trim();
     var start = text.indexOf("{"), end = text.lastIndexOf("}");
     if (start === -1) throw new Error("no json");
-    return JSON.parse(text.slice(start, end+1));
+    var meta = JSON.parse(text.slice(start, end+1));
+    // Safety checks
+    if (!meta.title || meta.title.length < 10) meta.title = topic.title;
+    if (meta.title.length > 100) meta.title = meta.title.slice(0, 97) + "...";
+    if (!meta.description || meta.description.length < 50) {
+      meta.description = topic.hook + "\n\nIn this video: " + topic.title + "\n\nSubscribe for daily videos on " + niche + ".";
+    }
+    if (!meta.tags || meta.tags.length < 5) {
+      meta.tags = [niche, "AI tools", "small business", "productivity", "2025", "2026", "tutorial", "how to", topic.angle||"tips", "make money online"];
+    }
+    meta.category = "27";
+    return meta;
   }).catch(function(){
-    return { title: topic.title, description: "New video every day on " + niche + ".\n\n" + (topic.hook||"") + "\n\nSubscribe and hit the bell!", tags: [niche,"AI tools","small business","productivity","2025","tutorial","tips"], category: "27" };
+    return {
+      title: topic.title.slice(0, 90),
+      description: (topic.hook || "Watch this before your competition does.") + "\n\nIn this video I cover:\n- " + topic.title + "\n\nTimestamps:\n0:00 Introduction\n1:30 The Problem\n3:00 Solution 1\n5:00 Solution 2\n7:30 Key Takeaway\n9:00 Final Thoughts\n\n#" + niche.replace(/\s+/g,"") + " #SmallBusiness #AITools\n\nSubscribe for daily tips on " + niche + ".",
+      tags: [topic.title.slice(0,30), niche, "AI tools for business", "small business tips", "productivity hacks", "make money online", "passive income 2025", "AI automation", "business tips 2026", "how to use AI", "entrepreneur tips", "side hustle", "digital products", "online business", "work from home", "AI productivity", niche + " tips", "business automation", "startup tips", "financial freedom"],
+      category: "27"
+    };
   });
 }
 
@@ -969,8 +1155,10 @@ function run(niche, product_url) {
           return null;
         });
       }
+      // Persist topic to survive Railway restarts
+      persistTopicSeed(topicData.title);
       return shortUpload.then(function(shortResult) {
-        return { status: "complete", title: topicData.title, dir: videoDir, upload: uploadResult, short: shortResult };
+        return { status: "complete", title: topicData.title, dir: videoDir, upload: uploadResult, short: shortResult, angle: topicData.angle, theme: theme.name };
       });
     });
   });
