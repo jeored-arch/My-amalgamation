@@ -604,10 +604,17 @@ function buildVideo(title, scriptText, outputPath, theme) {
     var music     = generateMusic(ffmpegPath, totalSecs, musicPath);
     var voicePath = path.join(tmpDir, "voice.mp3");
 
-    // Send FULL script to ElevenLabs — chunked automatically for paid plans
-    // At ~15 chars/sec speech rate, 7000 chars = ~7.5 min, matching the ~10 min video
-    console.log("     → Voiceover: " + scriptText.length + " chars (~" + Math.round(scriptText.length/15) + "s speech)");
-    return generateVoiceover(scriptText, voicePath).then(function(voiceFile) {
+    // Clean script before sending to ElevenLabs
+    // Remove ## section markers, timestamps, and any non-spoken text
+    var cleanScript = scriptText
+      .replace(/##[^\n]*/g, "")
+      .replace(/\([0-9]:[^)]*\)/g, "")
+      .replace(/\*+([^*]+)\*+/g, "$1")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    console.log("     → Voiceover: " + cleanScript.length + " chars (~" + Math.round(cleanScript.length/15) + "s speech)");
+    return generateVoiceover(cleanScript, voicePath).then(function(voiceFile) {
       var mixed = false;
 
       // ── AUDIO STRATEGY ─────────────────────────────────────────────────
@@ -1135,6 +1142,13 @@ function run(niche, product_url) {
         log[log.length-1].status      = "uploaded";
         log[log.length-1].youtube_url = uploadResult.url;
         fs.writeFileSync(logFile, JSON.stringify(log,null,2));
+        // Upload clean captions
+        try {
+          var srtContent = generateSRT(scriptText);
+          getAccessToken().then(function(tok){
+            uploadCaptions(uploadResult.video_id, srtContent, tok).catch(function(){});
+          }).catch(function(){});
+        } catch(capErr) { console.log("     → Caption err: " + capErr.message.slice(0,80)); }
       }
       // ── UPLOAD SHORT ──────────────────────────────────────────────────
       var ffmpegPath2 = findFfmpeg();
@@ -1161,6 +1175,104 @@ function run(niche, product_url) {
         return { status: "complete", title: topicData.title, dir: videoDir, upload: uploadResult, short: shortResult, angle: topicData.angle, theme: theme.name };
       });
     });
+  });
+}
+
+// ── CAPTION GENERATOR ────────────────────────────────────────────────────────
+
+function generateSRT(scriptText) {
+  // Clean script same way as voiceover
+  var clean = scriptText
+    .replace(/##[^\n]*/g, "")
+    .replace(/\([0-9]:[^)]*\)/g, "")
+    .replace(/\*+([^*]+)\*+/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // Split into words
+  var words = clean.replace(/\n/g, " ").split(/\s+/).filter(function(w){ return w.length > 0; });
+  var WPM = 150; // words per minute
+  var secsPerWord = 60 / WPM;
+  var WORDS_PER_CAPTION = 7; // max words per caption line
+
+  var srt = "";
+  var index = 1;
+  var timeOffset = 0;
+
+  for (var i = 0; i < words.length; i += WORDS_PER_CAPTION) {
+    var chunk = words.slice(i, i + WORDS_PER_CAPTION);
+    var startSecs = timeOffset;
+    var endSecs   = timeOffset + (chunk.length * secsPerWord);
+
+    function toSRTTime(s) {
+      var h  = Math.floor(s / 3600);
+      var m  = Math.floor((s % 3600) / 60);
+      var sc = Math.floor(s % 60);
+      var ms = Math.floor((s % 1) * 1000);
+      return String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0") + ":" + String(sc).padStart(2,"0") + "," + String(ms).padStart(3,"0");
+    }
+
+    // Capitalize emphasis words in captions
+    var emphasisWords = ["stop","never","secret","warning","truth","hack","mistake","mistakes","free","exposed","finally","now","important","critical","key"];
+    var captionLine = chunk.map(function(w){
+      var clean2 = w.replace(/[^a-zA-Z]/g,"").toLowerCase();
+      return emphasisWords.includes(clean2) ? w.toUpperCase() : w;
+    }).join(" ");
+
+    srt += index + "\n";
+    srt += toSRTTime(startSecs) + " --> " + toSRTTime(endSecs) + "\n";
+    srt += captionLine + "\n\n";
+
+    index++;
+    timeOffset = endSecs;
+  }
+
+  return srt;
+}
+
+function uploadCaptions(videoId, srtContent, accessToken) {
+  if (!videoId || !srtContent || !accessToken) return Promise.resolve(null);
+  var body = Buffer.from(srtContent, "utf8");
+  return new Promise(function(resolve) {
+    var req = https.request({
+      hostname: "www.googleapis.com",
+      path: "/upload/youtube/v3/captions?uploadType=resumable&part=snippet&sync=true",
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + accessToken,
+        "Content-Type": "application/json",
+        "X-Upload-Content-Type": "text/plain",
+        "X-Upload-Content-Length": body.length,
+        "Content-Length": Buffer.byteLength(JSON.stringify({
+          snippet: { videoId: videoId, language: "en", name: "English", isDraft: false }
+        }))
+      }
+    }, function(res) {
+      var uploadUrl = res.headers.location;
+      if (!uploadUrl) {
+        var e = ""; res.on("data", function(d){ e+=d; });
+        res.on("end", function(){ console.log("     → Caption init HTTP " + res.statusCode + " | " + e.slice(0,100)); resolve(null); });
+        return;
+      }
+      var upReq = https.request(uploadUrl, { method: "PUT", headers: { "Content-Type": "text/plain", "Content-Length": body.length } }, function(upRes) {
+        var d = ""; upRes.on("data", function(c){ d+=c; });
+        upRes.on("end", function(){
+          if (upRes.statusCode === 200 || upRes.statusCode === 201) {
+            console.log("     ✓ Captions uploaded");
+            resolve(true);
+          } else {
+            console.log("     → Caption upload HTTP " + upRes.statusCode + " | " + d.slice(0,100));
+            resolve(null);
+          }
+        });
+      });
+      upReq.on("error", function(){ resolve(null); });
+      upReq.write(body);
+      upReq.end();
+    });
+    req.on("error", function(){ resolve(null); });
+    req.write(JSON.stringify({ snippet: { videoId: videoId, language: "en", name: "English", isDraft: false } }));
+    req.end();
   });
 }
 
