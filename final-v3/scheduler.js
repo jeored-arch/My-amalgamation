@@ -42,16 +42,30 @@ async function runAgent() {
   console.log(`\n  🤖 [${new Date().toISOString()}] Starting daily agent run...`);
 
   try {
-    execSync("node -r dotenv/config agent.js", {
-      stdio: "inherit",
-      cwd:   __dirname,
-      timeout: 90 * 60 * 1000,  // 90 min max
+    await new Promise(function(resolve, reject) {
+      var child = require("child_process").spawn(
+        "node", ["-r", "dotenv/config", "agent.js"],
+        { stdio: "inherit", cwd: __dirname }
+      );
+      var timer = setTimeout(function() {
+        child.kill();
+        resolve(); // Don't reject — just move on after 90 min
+      }, 90 * 60 * 1000);
+      child.on("close", function(code) {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.on("error", function(err) {
+        clearTimeout(timer);
+        console.error("  → Spawn error: " + err.message);
+        resolve();
+      });
     });
     auditLog("SCHEDULED_RUN_COMPLETE", { timestamp: new Date().toISOString() });
   } catch (err) {
     console.error("  ❌ Agent run failed:", err.message);
     auditLog("SCHEDULED_RUN_FAILED", { error: err.message }, "alert");
-    await notify.sendTelegram(`🚨 <b>Scheduled run failed</b>\n\nError: ${err.message.slice(0, 200)}\n\nWill retry tomorrow at 8am.`);
+    await notify.sendTelegram(`🚨 <b>Scheduled run failed</b>\n\nError: ${err.message.slice(0, 200)}\n\nWill retry tomorrow at 8am.`).catch(function(){});
   } finally {
     isRunning = false;
   }
