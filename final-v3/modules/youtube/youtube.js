@@ -771,8 +771,16 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
   if (!config.youtube.refresh_token) return Promise.resolve({ status: "no_credentials" });
   if (!fs.existsSync(videoFilePath)) return Promise.resolve({ status: "no_video_file" });
   return getAccessToken().then(function(accessToken) {
+    // Sanitize tags — YouTube rejects uploads if any tag has bad chars or is too long
+    var rawTags = scriptData.tags || ["AI","tools","tutorial"];
+    var cleanTags = rawTags
+      .map(function(t){ return String(t).replace(/[<>]/g,"").replace(/,/g,"").trim().slice(0,30); })
+      .filter(function(t){ return t.length > 0 && t.length <= 30; })
+      .slice(0, 15);
+    if (cleanTags.length === 0) cleanTags = ["AI tools","small business","productivity"];
+
     var initBody = JSON.stringify({
-      snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: buildDescription(scriptData.description||"Subscribe for daily videos!"), tags: scriptData.tags||["AI","tools","tutorial"], categoryId: "27" },
+      snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: buildDescription(scriptData.description||"Subscribe for daily videos!"), tags: cleanTags, categoryId: "27" },
       status: { privacyStatus: "public", selfDeclaredMadeForKids: false },
     });
     var fileSize = fs.statSync(videoFilePath).size;
@@ -994,7 +1002,7 @@ function generateMetadata(topic, niche) {
     return {
       title: topic.title.slice(0, 90),
       description: (topic.hook || "Watch this before your competition does.") + "\n\nIn this video I cover:\n- " + topic.title + "\n\nTimestamps:\n0:00 Introduction\n1:30 The Problem\n3:00 Solution 1\n5:00 Solution 2\n7:30 Key Takeaway\n9:00 Final Thoughts\n\n#" + niche.replace(/\s+/g,"") + " #SmallBusiness #AITools\n\nSubscribe for daily tips on " + niche + ".",
-      tags: [topic.title.slice(0,30), niche, "AI tools for business", "small business tips", "productivity hacks", "make money online", "passive income 2025", "AI automation", "business tips 2026", "how to use AI", "entrepreneur tips", "side hustle", "digital products", "online business", "work from home", "AI productivity", niche + " tips", "business automation", "startup tips", "financial freedom"],
+      tags: [topic.title.slice(0,30), niche.slice(0,30), "AI tools for business", "small business tips", "productivity hacks", "make money online", "passive income 2025", "AI automation", "business tips 2026", "how to use AI", "entrepreneur tips", "side hustle", "digital products", "online business", "work from home"],
       category: "27"
     };
   });
