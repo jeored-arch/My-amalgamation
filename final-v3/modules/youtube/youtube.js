@@ -764,7 +764,8 @@ function buildDescription(desc) {
   var storeBlock = storeUrl
     ? "\n\n🛒 GET THE TOOLKIT: " + storeUrl + "\n(Digital guides & toolkits — instant download)"
     : "";
-  return desc + storeBlock + "\n\n---\nNew video every day. Subscribe & hit the bell 🔔";
+  var affiliateBlock = "\n\n---\n🎙️ The AI voice in this video is powered by ElevenLabs.\nI use it every single day to run my content business.\nTry it free → https://try.elevenlabs.io/2pu1o9y92jl1";
+  return desc + storeBlock + affiliateBlock + "\n\n---\nNew video every day. Subscribe & hit the bell 🔔";
 }
 
 function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
