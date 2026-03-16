@@ -19,6 +19,7 @@ const heal      = require("./core/self-healing");
 const products  = require("./core/product-engine");
 const store     = require("./core/store");
 const pinterest = require("./modules/pinterest/pinterest");
+const blogger   = require("./modules/blogger/blogger");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -212,6 +213,21 @@ async function main() {
     console.log("     → Pinterest: " + e.message.slice(0, 100));
   }
 
+  // ── BLOGGER ────────────────────────────────────────────────────────────────
+  try {
+    const blogFile = path.join(process.cwd(), "output/content", `post-day-${state.day+1}.md`);
+    const blogContent = fs.existsSync(blogFile)
+      ? "<p>" + fs.readFileSync(blogFile, "utf8").replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>") + "</p>"
+      : null;
+    const blogResult = await blogger.run(currentNiche, blogContent, videoUrl, state.product_url);
+    if (blogResult.status === "complete") {
+      ok(`Blog post live: ${blogResult.url}`);
+      await notify.sendTelegram(`📝 Blog Post Live!\n${blogResult.url}`).catch(()=>{});
+    }
+  } catch(e) {
+    console.log("     → Blogger: " + e.message.slice(0, 100));
+  }
+
   // ── PRODUCTS ───────────────────────────────────────────────────────────────
   console.log(c("cyan","\n  🏭 Product creation..."));
   try {
@@ -274,6 +290,7 @@ async function main() {
   const ytStats    = youtube.getGrowthStatus();
   const prodStats  = store.getStoreStats ? store.getStoreStats() : { total_products: 0 };
   const pinStats   = pinterest.getStats();
+  const blogStats  = blogger.getStats();
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow`));
   console.log(
@@ -282,6 +299,7 @@ async function main() {
     `  Videos:     ${ytStats.videos_uploaded} uploaded\n` +
     `  Brain:      ${ytStats.videos_created} tracked | learning winning\n` +
     `  Products:   ${prodStats.total_products||0} created\n` +
+    `  Blog posts: ${blogStats.total_posts||0} published\n` +
     `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n` +
     `  Pinterest:  ${pinStats.total_pins} total pins\n`
   );
@@ -290,6 +308,7 @@ async function main() {
     `✅ Day ${state.day} Complete!\n` +
     `Niche: ${currentNiche}\n` +
     `Video: ${videoUrl || "building"}\n` +
+    `Blog: ${blogStats.last_url || "none"}\n` +
     `Pinterest: ${pinStats.total_pins} pins\n` +
     `Store: https://${process.env.RAILWAY_PUBLIC_DOMAIN||"localhost"}/store`
   ).catch(()=>{});
