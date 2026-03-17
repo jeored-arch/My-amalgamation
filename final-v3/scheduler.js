@@ -112,6 +112,28 @@ async function main() {
 
   auditLog("SCHEDULER_STARTED", { timezone: TZ, platform: "railway" });
 
+  // ── PERSISTENT HTTP SERVER ─────────────────────────────────────────────────
+  // Keeps the store alive 24/7 even when agent.js is not running
+  try {
+    const http = require("http");
+    const { handleRequest } = require("./dashboard/server");
+    const PORT = parseInt(process.env.PORT || 3000);
+    const httpServer = http.createServer(handleRequest);
+    httpServer.on("error", function(e) {
+      if (e.code === "EADDRINUSE") {
+        console.log("  → Port " + PORT + " already in use — store already running");
+      } else {
+        console.log("  → HTTP server error: " + e.message);
+      }
+    });
+    httpServer.listen(PORT, function() {
+      console.log("  ✓  Store running 24/7 at https://" + (process.env.RAILWAY_PUBLIC_DOMAIN || ("localhost:" + PORT)) + "/store");
+    });
+  } catch(e) {
+    console.log("  → Could not start HTTP server: " + e.message);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   await notify.sendTelegram(`
 ☁️ <b>Cloud Scheduler Started</b>
 
