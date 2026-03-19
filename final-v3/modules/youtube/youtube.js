@@ -859,28 +859,48 @@ function getRotatingNiche(baseNiche, usedCount) {
 function researchTopics(niche, usedTopics) {
   var avoidList = (usedTopics||[]).slice(-30).join(", ") || "none yet";
   var activeNiche = getRotatingNiche(niche, (usedTopics||[]).length);
+
+  // Load brain data to inform topic selection with real channel performance
+  var brainContext = "";
+  try {
+    var brainFile = path.join(process.cwd(), "data", "brain.json");
+    if (fs.existsSync(brainFile)) {
+      var brain = JSON.parse(fs.readFileSync(brainFile, "utf8"));
+      var bestAngle = brain.strategy && brain.strategy.current_focus_angle ? brain.strategy.current_focus_angle : null;
+      var topVideos = (brain.videos || []).sort(function(a,b){ return (b.views||0)-(a.views||0); }).slice(0,3);
+      if (bestAngle) brainContext += "\nBEST PERFORMING ANGLE on this channel: " + bestAngle + " — use this angle for at least 2 topics\n";
+      if (topVideos.length > 0) {
+        brainContext += "TOP PERFORMING VIDEOS (model these):\n";
+        topVideos.forEach(function(v){ if(v.title) brainContext += "- " + v.title + " (" + (v.views||0) + " views)\n"; });
+      }
+    }
+  } catch(e) {}
+
   return client.messages.create({
     model: config.anthropic.model, max_tokens: 1500,
     messages: [{ role: "user", content:
-      "You are a top YouTube strategist. Generate 8 HIGH-PERFORMING video topics for a faceless YouTube channel about \"" + activeNiche + "\"\n\n" +
+      "You are a top YouTube strategist for a small business / finance / AI tools channel with a proven audience.\n\n" +
+      "Generate 8 HIGH-PERFORMING video topics for niche: \"" + activeNiche + "\"\n\n" +
+      (brainContext ? brainContext + "\n" : "") +
       "ALREADY USED — DO NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
-      "PROVEN VIRAL FORMULAS — use these structures:\n" +
-      "1. \"I Did X for 30 Days — Here\'s What Happened\"\n" +
-      "2. \"The [Number] [Niche] Mistakes That Cost Me $[Amount]\"\n" +
-      "3. \"Nobody Talks About This [Topic] Strategy (But It Works)\"\n" +
-      "4. \"[Number] Things I Wish I Knew Before [Starting X]\"\n" +
-      "5. \"The Truth About [Popular Belief] (This Changes Everything)\"\n" +
-      "6. \"How I Made $[Amount] With Zero [Common Requirement]\"\n" +
-      "7. \"Stop [Common Advice] — Do This Instead\"\n" +
-      "8. \"[Number] Signs You\'re [Negative Outcome] (And How to Fix It)\"\n\n" +
+      "PROVEN WINNING FORMULAS for this audience (small business owners who fear losing money):\n" +
+      "1. WARNING: [Number] [Tool/Strategy] [Negative Consequence] (EXPOSED)\n" +
+      "2. [Number] [Niche] MISTAKES That Cost Small Business Owners $[Amount]\n" +
+      "3. SECRETS: What [Big Company/IRS/Bank] Hopes You Never Find Out\n" +
+      "4. I [Did X] for [Time Period] — Here\'s the Honest Truth\n" +
+      "5. Stop [Common Advice] — Here\'s What Actually Works in [Year]\n" +
+      "6. The [Dollar Amount] [Niche] Hack Nobody Is Talking About\n" +
+      "7. [Number] Signs Your [Business/Finances] Are in Danger (Fix These Now)\n" +
+      "8. How I [Achieved Result] Without [Common Barrier]\n\n" +
       "REQUIREMENTS:\n" +
-      "- Every title must create IMMEDIATE curiosity or fear of missing out\n" +
-      "- Include specific numbers and dollar amounts where natural\n" +
-      "- Each must have a UNIQUE angle — no two topics can be similar\n" +
-      "- Angles must vary: mistakes, case-study, warning, how-to, truth-bomb, list, story\n" +
-      "- Titles 50-80 chars — punchy, not clickbait\n\n" +
+      "- Every title must trigger fear of loss OR curiosity — not both, pick one and commit\n" +
+      "- Use CAPS on 1-2 power words per title (WARNING, SECRETS, EXPOSED, STOP, NEVER)\n" +
+      "- Include specific dollar amounts and numbers — vague titles get ignored\n" +
+      "- Write for small business owners aged 25-50 who are worried about money\n" +
+      "- Titles 55-75 chars — punchy, no filler words\n" +
+      "- Hooks must be a single sentence that makes them terrified to click away\n\n" +
       "Return ONLY a JSON array:\n" +
-      "[{\"title\":\"I Tried 47 AI Tools So You Don\'t Have To (Here\'s What Works)\",\"hook\":\"After 6 months and $3,000 testing every major AI tool, I found only 5 worth paying for\",\"angle\":\"case-study\",\"niche\":\"" + activeNiche + "\"}]"
+      "[{\"title\":\"WARNING: 5 AI Tools Quietly Draining Your Business Budget\",\"hook\":\"I found $847/month in hidden charges across tools my clients were already paying for\",\"angle\":\"warning\",\"niche\":\"" + activeNiche + "\"}]"
     }],
   }).then(function(res) {
     var text = res.content[0].text.trim().replace(/```json/g,"").replace(/```/g,"").trim();
@@ -908,13 +928,14 @@ function researchTopics(niche, usedTopics) {
 function generateScript(topic, niche, product_url) {
   return client.messages.create({
     model: config.anthropic.model, max_tokens: 4096,
-    system: "You are a top-tier YouTube scriptwriter who has written for channels with 500K-2M subscribers. Your scripts are known for:\n" +
-      "1. PATTERN INTERRUPT hooks that stop the scroll in the first 7 seconds\n" +
-      "2. Open loops that keep viewers watching (tease what\'s coming)\n" +
-      "3. Storytelling with specific details — real numbers, real situations\n" +
-      "4. Conversational pacing — sounds natural when spoken aloud\n" +
-      "5. Strategic curiosity gaps every 60-90 seconds\n" +
-      "NEVER use bullet points in the spoken narration. NEVER sound corporate or stiff.",
+    system: "You are a top-tier YouTube scriptwriter for a small business / AI tools / finance channel. Your scripts have driven millions of views because:\n" +
+      "1. Your FIRST SENTENCE is always a bold, counterintuitive, or alarming statement — never a greeting\n" +
+      "2. You write like a trusted friend who just discovered something shocking, not a lecturer\n" +
+      "3. Every 90 seconds you plant a curiosity gap — tease what is coming so they cannot stop watching\n" +
+      "4. You use SPECIFIC details — real dollar amounts, real timeframes, real tool names\n" +
+      "5. Your pacing is conversational — short punchy sentences mixed with longer explanations\n" +
+      "6. You never say Hey guys, Welcome back, Do not forget to like, or any filler phrases\n" +
+      "NEVER use bullet points in spoken narration. NEVER sound like an AI wrote this.",
     messages: [{ role: "user", content:
       "Write a complete 10-12 minute YouTube script for: \"" + topic.title + "\"\n" +
       "Niche: " + niche + "\n" +
