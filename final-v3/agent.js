@@ -20,6 +20,7 @@ const products  = require("./core/product-engine");
 const store     = require("./core/store");
 const pinterest = require("./modules/pinterest/pinterest");
 const blogger   = require("./modules/blogger/blogger");
+const reddit    = require("./modules/reddit/reddit");
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -32,10 +33,24 @@ const inf = (msg) => console.log(`  ${c("cyan","→")}  ${msg}`);
 const wrn = (msg) => console.log(`  ${c("yellow","⚠")}  ${msg}`);
 
 function loadState() {
+  // Try state.json first
   if (fs.existsSync(STATE_FILE)) {
-    try { return JSON.parse(fs.readFileSync(STATE_FILE,"utf8")); } catch {}
+    try {
+      const s = JSON.parse(fs.readFileSync(STATE_FILE,"utf8"));
+      if (s && s.day > 0) return s;
+    } catch {}
   }
-  return { day:0, niche:null, product_url:null, emails_total:0, content_total:0, youtube_videos:0, videos_built:0, printify_products:0, last_run:null };
+  // Fallback: recover day count from brain.json so resets don't lose progress
+  const BRAIN_FILE = path.join(DATA_DIR, "brain.json");
+  let recoveredDay = 0;
+  try {
+    if (fs.existsSync(BRAIN_FILE)) {
+      const brain = JSON.parse(fs.readFileSync(BRAIN_FILE,"utf8"));
+      recoveredDay = brain.performance?.total_videos || brain.daily_logs?.length || 0;
+      if (recoveredDay > 0) console.log("  → State recovered from brain: Day " + recoveredDay);
+    }
+  } catch {}
+  return { day:recoveredDay, niche:null, product_url:null, emails_total:0, content_total:0, youtube_videos:0, videos_built:0, printify_products:0, last_run:null };
 }
 
 function saveState(s) {
@@ -158,7 +173,7 @@ async function main() {
 
   // ── YOUTUBE ────────────────────────────────────────────────────────────────
   console.log(c("cyan","\n  📹 YouTube pipeline..."));
-  let videoAngle = "general", videoTitle = "", videoUrl = null;
+  let videoAngle = "general", videoTitle = "", videoUrl = null, blogUrl = null;
 
   if (flags.youtube_upload_paused) {
     wrn("YouTube upload paused by self-healer — building video only");
@@ -221,11 +236,25 @@ async function main() {
       : null;
     const blogResult = await blogger.run(currentNiche, blogContent, videoUrl, state.product_url);
     if (blogResult.status === "complete") {
+      blogUrl = blogResult.url;
       ok(`Blog post live: ${blogResult.url}`);
       await notify.sendTelegram(`📝 Blog Post Live!\n${blogResult.url}`).catch(()=>{});
     }
   } catch(e) {
     console.log("     → Blogger: " + e.message.slice(0, 100));
+  }
+
+  // ── REDDIT ────────────────────────────────────────────────────────────────
+  try {
+    const redditResult = await reddit.run(currentNiche, blogUrl, videoUrl, videoTitle);
+    if (redditResult.status === "complete") {
+      ok(`Reddit post live: r/${redditResult.subreddit}`);
+      await notify.sendTelegram(`🤖 Reddit Post Live!
+r/${redditResult.subreddit}
+${redditResult.url||""}`).catch(()=>{});
+    }
+  } catch(e) {
+    console.log("     → Reddit: " + e.message.slice(0, 100));
   }
 
   // ── PRODUCTS ───────────────────────────────────────────────────────────────
@@ -290,7 +319,8 @@ async function main() {
   const ytStats    = youtube.getGrowthStatus();
   const prodStats  = store.getStoreStats ? store.getStoreStats() : { total_products: 0 };
   const pinStats   = pinterest.getStats();
-  const blogStats  = blogger.getStats();
+  const blogStats   = blogger.getStats();
+  const redditStats = reddit.getStats();
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow`));
   console.log(
@@ -300,6 +330,7 @@ async function main() {
     `  Brain:      ${ytStats.videos_created} tracked | learning winning\n` +
     `  Products:   ${prodStats.total_products||0} created\n` +
     `  Blog posts: ${blogStats.total_posts||0} published\n` +
+    `  Reddit:     ${redditStats.total_posts||0} posts live\n` +
     `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n` +
     `  Pinterest:  ${pinStats.total_pins} total pins\n`
   );
