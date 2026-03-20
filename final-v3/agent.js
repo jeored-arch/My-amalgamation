@@ -20,7 +20,8 @@ const products  = require("./core/product-engine");
 const store     = require("./core/store");
 const pinterest = require("./modules/pinterest/pinterest");
 const blogger   = require("./modules/blogger/blogger");
-const reddit    = require("./modules/reddit/reddit");
+let reddit = null;
+try { reddit = require("./modules/reddit/reddit"); } catch(e) { console.log("  → Reddit module not found — skipping"); }
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -320,7 +321,7 @@ ${redditResult.url||""}`).catch(()=>{});
   const prodStats  = store.getStoreStats ? store.getStoreStats() : { total_products: 0 };
   const pinStats   = pinterest.getStats();
   const blogStats   = blogger.getStats();
-  const redditStats = reddit.getStats();
+  const redditStats = reddit ? reddit.getStats() : { total_posts: 0 };
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow`));
   console.log(
