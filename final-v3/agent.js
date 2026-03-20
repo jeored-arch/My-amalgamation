@@ -18,7 +18,6 @@ const brain     = require("./core/brain");
 const heal      = require("./core/self-healing");
 const products  = require("./core/product-engine");
 const store     = require("./core/store");
-const pinterest = require("./modules/pinterest/pinterest");
 const blogger   = require("./modules/blogger/blogger");
 let reddit = null;
 try { reddit = require("./modules/reddit/reddit"); } catch(e) { console.log("  → Reddit module not found — skipping"); }
@@ -212,22 +211,7 @@ async function main() {
     console.log("     → Stack: " + e.stack?.slice(0,200));
   }
 
-  // ── PINTEREST ──────────────────────────────────────────────────────────────
-  try {
-    const pinterestResult = await pinterest.run(
-      currentNiche,
-      videoUrl,
-      videoTitle,
-      state.product_url,
-      null
-    );
-    if (pinterestResult.status === "complete") {
-      const pinCount = (pinterestResult.video_pin ? 1 : 0) + (pinterestResult.product_pin ? 1 : 0);
-      if (pinCount > 0) ok(`Pinterest: ${pinCount} pin(s) live`);
-    }
-  } catch(e) {
-    console.log("     → Pinterest: " + e.message.slice(0, 100));
-  }
+  // ── PINTEREST — removed (app not approved)
 
   // ── BLOGGER ────────────────────────────────────────────────────────────────
   try {
@@ -319,7 +303,7 @@ ${redditResult.url||""}`).catch(()=>{});
   const healReport = heal.getReport();
   const ytStats    = youtube.getGrowthStatus();
   const prodStats  = store.getStoreStats ? store.getStoreStats() : { total_products: 0 };
-  const pinStats   = pinterest.getStats();
+  const pinStats   = { total_pins: 0 };
   const blogStats   = blogger.getStats();
   const redditStats = reddit ? reddit.getStats() : { total_posts: 0 };
 
