@@ -42,7 +42,6 @@ function saveStore(data) {
 
 function addProduct(product) {
   const store = loadStore();
-  // Don't add duplicates
   const exists = store.products.find(function(p) { return p.name === product.name; });
   if (exists) { console.log("     → Store: product already exists — " + product.name.slice(0,50)); return exists; }
   const id    = "prod_" + Date.now();
@@ -171,25 +170,133 @@ function checkToken(token) {
 // ── PAGES ─────────────────────────────────────────────────────────────────────
 
 function pageStore(products) {
+
+  function smartDesc(p) {
+    var n = (p.name || "").toLowerCase();
+    if (n.includes("bible"))     return "150+ write-offs organized by platform — Uber, DoorDash, Instacart, freelance & more. Most gig workers overpay by $1,200+ a year without knowing it.";
+    if (n.includes("vault"))     return "147 deductions the IRS doesn't advertise, including hidden write-offs for your phone, home office, mileage & health insurance premiums.";
+    if (n.includes("kit"))       return "Full deduction guide plus a weekly expense tracker spreadsheet — so you're never scrambling for receipts when tax time hits.";
+    if (n.includes("course"))    return "Step-by-step lessons delivered to your inbox. Learn at your own pace and put strategies to work immediately.";
+    if (n.includes("checklist")) return "A fast-action checklist you can work through in under an hour to find money you're leaving on the table right now.";
+    return (p.description || "Everything you need to save money and grow your gig business.").slice(0, 130);
+  }
+
+  function badgeLabel(p) {
+    var n = (p.name || "").toLowerCase();
+    if (n.includes("bible"))    return "Most popular";
+    if (n.includes("vault"))    return "IRS secrets";
+    if (n.includes("kit"))      return "Best value";
+    if (n.includes("course"))   return "Step-by-step";
+    return "New";
+  }
+
+  function coverSVG(p) {
+    var n = (p.name || "").toLowerCase();
+    var bg, accent, bigLabel;
+    if (n.includes("bible"))       { bg = "#0D1B2A"; accent = "#1D9E75"; bigLabel = "150+"; }
+    else if (n.includes("vault"))  { bg = "#1A0E00"; accent = "#EF9F27"; bigLabel = "147";  }
+    else if (n.includes("kit"))    { bg = "#0A0A1A"; accent = "#7F77DD"; bigLabel = "KIT";  }
+    else                           { bg = "#0D1B2A"; accent = "#00d4aa"; bigLabel = "$";    }
+
+    var title = (p.name || "").split(":")[0].trim();
+    if (title.length > 28) title = title.slice(0, 26) + "\u2026";
+
+    return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 240' width='100%' height='100%'>"
+      + "<rect width='400' height='240' fill='" + bg + "'/>"
+      + "<line x1='0' y1='60' x2='60' y2='0' stroke='" + accent + "' stroke-width='1' opacity='0.15'/>"
+      + "<line x1='0' y1='120' x2='120' y2='0' stroke='" + accent + "' stroke-width='1' opacity='0.1'/>"
+      + "<line x1='0' y1='180' x2='180' y2='0' stroke='" + accent + "' stroke-width='1' opacity='0.08'/>"
+      + "<line x1='0' y1='240' x2='240' y2='0' stroke='" + accent + "' stroke-width='1' opacity='0.08'/>"
+      + "<line x1='60' y1='240' x2='300' y2='0' stroke='" + accent + "' stroke-width='1' opacity='0.06'/>"
+      + "<line x1='120' y1='240' x2='360' y2='0' stroke='" + accent + "' stroke-width='1' opacity='0.06'/>"
+      + "<line x1='180' y1='240' x2='400' y2='20' stroke='" + accent + "' stroke-width='1' opacity='0.05'/>"
+      + "<rect x='28' y='28' width='4' height='56' fill='" + accent + "' opacity='0.9'/>"
+      + "<text x='44' y='72' font-family='Impact,Arial Black,sans-serif' font-size='52' font-weight='bold' fill='white'>" + esc(bigLabel) + "</text>"
+      + "<text x='44' y='90' font-family='Arial,sans-serif' font-size='11' font-weight='600' fill='" + accent + "' letter-spacing='1'>WRITE-OFFS INSIDE</text>"
+      + "<rect x='300' y='24' width='72' height='72' rx='8' fill='" + accent + "' opacity='0.12'/>"
+      + "<text x='336' y='72' font-family='Impact,Arial Black,sans-serif' font-size='36' fill='" + accent + "' text-anchor='middle'>$</text>"
+      + "<text x='28' y='128' font-family='Arial,sans-serif' font-size='15' font-weight='700' fill='white'>" + esc(title) + "</text>"
+      + "<rect x='28' y='140' width='344' height='2' fill='" + accent + "' opacity='0.6'/>"
+      + "<text x='28' y='224' font-family='Arial,sans-serif' font-size='10' fill='" + accent + "' opacity='0.8'>SMALLBIZAIDAILY.COM</text>"
+      + "<text x='372' y='224' font-family='Arial,sans-serif' font-size='10' fill='white' opacity='0.3' text-anchor='end'>2025</text>"
+      + "<rect x='0' y='234' width='400' height='6' fill='" + accent + "'/>"
+      + "</svg>";
+  }
+
+  function oldPrice(price) {
+    return Math.round(price * 2);
+  }
+
   var cards = products.length === 0
-    ? "<div style='text-align:center;padding:80px;color:#6b7280'><p style='font-size:18px'>New products launching soon — check back tomorrow!</p></div>"
+    ? "<div style='text-align:center;padding:80px 20px;color:#6b7280'>"
+      + "<p style='font-size:48px;margin-bottom:16px'>\u23f3</p>"
+      + "<p style='font-size:18px;font-weight:600;color:#374151;margin-bottom:8px'>New products launching soon</p>"
+      + "<p style='font-size:14px'>Check back tomorrow \u2014 new guides drop daily.</p>"
+      + "</div>"
     : products.map(function(p) {
-        var icon = p.type==="email_course"?"📧":p.type==="notion"?"📋":"📄";
-        return "<div style='background:white;border-radius:12px;padding:28px;box-shadow:0 2px 12px rgba(0,0,0,0.08);display:flex;flex-direction:column'>"
-          + "<div style='background:linear-gradient(135deg,#0d1b2a,#1b4332);border-radius:8px;padding:20px;margin-bottom:16px;text-align:center;font-size:36px'>" + icon + "</div>"
-          + "<h3 style='margin:0 0 8px;color:#0d1b2a;font-size:15px;line-height:1.4'>" + esc(p.name) + "</h3>"
-          + "<p style='color:#6b7280;font-size:13px;flex:1;margin:0 0 16px;line-height:1.5'>" + esc((p.description||"").slice(0,100)) + "...</p>"
+        var desc  = smartDesc(p);
+        var badge = badgeLabel(p);
+        var cover = coverSVG(p);
+        var old   = oldPrice(p.price);
+
+        return "<div style='background:white;border-radius:14px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.08);display:flex;flex-direction:column;transition:transform 0.2s' onmouseover=\"this.style.transform='translateY(-4px)'\" onmouseout=\"this.style.transform='translateY(0)'\">"
+          + "<div style='width:100%;overflow:hidden;background:#0d1b2a'>" + cover + "</div>"
+          + "<div style='padding:20px 22px 22px;display:flex;flex-direction:column;flex:1'>"
+          + "<span style='display:inline-block;background:#e1f5ee;color:#085041;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:10px;align-self:flex-start'>" + esc(badge) + "</span>"
+          + "<h3 style='margin:0 0 8px;color:#0d1b2a;font-size:15px;font-weight:700;line-height:1.4'>" + esc(p.name) + "</h3>"
+          + "<p style='color:#4b5563;font-size:13px;line-height:1.65;flex:1;margin:0 0 16px'>" + esc(desc) + "</p>"
+          + "<div style='background:#f9fafb;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#374151;line-height:1.8'>"
+          + "<span style='color:#1D9E75;font-weight:700'>\u2713</span> Instant PDF download &nbsp;"
+          + "<span style='color:#1D9E75;font-weight:700'>\u2713</span> Works for 2025 taxes &nbsp;"
+          + "<span style='color:#1D9E75;font-weight:700'>\u2713</span> Gig-worker focused"
+          + "</div>"
           + "<div style='display:flex;align-items:center;justify-content:space-between'>"
-          + "<span style='font-size:22px;font-weight:700;color:#0d1b2a'>$" + p.price + "</span>"
-          + "<a href='/store/buy/" + p.id + "' style='background:#00d4aa;color:#0d1b2a;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px'>Buy Now</a>"
-          + "</div></div>";
+          + "<div style='display:flex;align-items:baseline;gap:8px'>"
+          + "<span style='font-size:26px;font-weight:800;color:#0d1b2a'>$" + p.price + "</span>"
+          + "<span style='font-size:13px;color:#9ca3af;text-decoration:line-through'>$" + old + "</span>"
+          + "</div>"
+          + "<a href='/store/buy/" + p.id + "' style='background:#00d4aa;color:#0d1b2a;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;white-space:nowrap'>Buy Now \u2192</a>"
+          + "</div>"
+          + "</div>"
+          + "</div>";
       }).join("");
 
-  return "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Digital Products Store</title>"
-    + "<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f9fafb}.hero{background:linear-gradient(135deg,#0d1b2a,#1b4332);color:white;padding:60px 20px;text-align:center}.hero h1{font-size:36px;margin-bottom:12px}.hero p{font-size:18px;opacity:.8}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:24px;max-width:1100px;margin:40px auto;padding:0 20px}.badge{display:inline-block;background:rgba(0,212,170,.15);color:#00d4aa;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;margin-bottom:16px}</style></head>"
-    + "<body><div class='hero'><div class='badge'>\u2726 Premium Digital Products</div><h1>Level Up Your Business</h1><p>Proven guides &amp; toolkits — at prices that make sense</p></div>"
+  return "<!DOCTYPE html><html lang='en'><head>"
+    + "<meta charset='UTF-8'>"
+    + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    + "<title>Gig Worker Tax Guides \u2014 SmallBiz AI Daily</title>"
+    + "<style>"
+    + "*{box-sizing:border-box;margin:0;padding:0}"
+    + "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6}"
+    + ".hero{background:linear-gradient(135deg,#0d1b2a 0%,#1b4332 100%);color:white;padding:56px 20px 52px;text-align:center}"
+    + ".hero-tag{display:inline-block;background:rgba(0,212,170,0.15);color:#00d4aa;padding:5px 16px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:16px}"
+    + ".hero h1{font-size:clamp(24px,4vw,38px);font-weight:800;margin-bottom:12px;line-height:1.2}"
+    + ".hero p{font-size:16px;opacity:0.75;max-width:520px;margin:0 auto 24px;line-height:1.6}"
+    + ".hero-pills{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}"
+    + ".pill{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.8);padding:5px 14px;border-radius:20px;font-size:12px}"
+    + ".grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px;max-width:1080px;margin:40px auto;padding:0 20px}"
+    + ".trust{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;max-width:800px;margin:0 auto 48px;padding:0 20px}"
+    + ".trust-item{display:flex;align-items:center;gap:6px;font-size:13px;color:#6b7280}"
+    + ".trust-dot{width:8px;height:8px;border-radius:50%;background:#1D9E75;flex-shrink:0}"
+    + "</style></head><body>"
+    + "<div class='hero'>"
+    + "<div class='hero-tag'>\u2605 Built for gig workers &amp; freelancers</div>"
+    + "<h1>Stop Overpaying in Taxes.<br>Start Keeping More of What You Earn.</h1>"
+    + "<p>Practical PDF guides written specifically for Uber drivers, DoorDash couriers, Instacart shoppers, and freelancers \u2014 not corporate employees.</p>"
+    + "<div class='hero-pills'>"
+    + "<span class='pill'>\u2713 Instant download</span>"
+    + "<span class='pill'>\u2713 2025 tax year</span>"
+    + "<span class='pill'>\u2713 Stripe secure checkout</span>"
+    + "<span class='pill'>\u2713 All gig platforms covered</span>"
+    + "</div>"
+    + "</div>"
     + "<div class='grid'>" + cards + "</div>"
-    + "<div style='text-align:center;padding:40px;color:#9ca3af;font-size:13px'>\uD83D\uDD12 Secure payments by Stripe &middot; Instant digital delivery</div>"
+    + "<div class='trust'>"
+    + "<div class='trust-item'><div class='trust-dot'></div>Instant PDF delivery to your email</div>"
+    + "<div class='trust-item'><div class='trust-dot'></div>Secured by Stripe \u2014 no account needed</div>"
+    + "<div class='trust-item'><div class='trust-dot'></div>Updated for 2025 tax year</div>"
+    + "<div class='trust-item'><div class='trust-dot'></div>Questions? Reply to your receipt email</div>"
+    + "</div>"
     + "</body></html>";
 }
 
@@ -204,7 +311,7 @@ function pageBuy(product, pubKey) {
     + "<hr style='border:none;border-top:1px solid #f0f0f0;margin:28px 0'>"
     + "<form id='pf'><label>Email address</label><input type='email' id='em' placeholder='you@example.com' required>"
     + "<label>Card details</label><div id='card-element'></div><div id='error-msg'></div>"
-    + "<button type='submit' id='pay-btn'>Pay $" + product.price + " — Get Instant Access</button></form>"
+    + "<button type='submit' id='pay-btn'>Pay $" + product.price + " \u2014 Get Instant Access</button></form>"
     + "<p class='secure'>\uD83D\uDD12 Secured by Stripe &middot; File delivered instantly by email</p></div></div>"
     + "<script>var stripe=Stripe('" + pubKey + "');var elements=stripe.elements();var card=elements.create('card',{style:{base:{fontSize:'16px',color:'#1a1a2e','::placeholder':{color:'#9ca3af'}}}});card.mount('#card-element');"
     + "document.getElementById('pf').addEventListener('submit',async function(e){e.preventDefault();"
@@ -213,7 +320,7 @@ function pageBuy(product, pubKey) {
     + "try{var r=await fetch('/store/checkout/" + product.id + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});"
     + "var d=await r.json();if(d.error){err.textContent=d.error;btn.disabled=false;btn.textContent='Pay $" + product.price + " \u2014 Get Instant Access';return;}"
     + "var result=await stripe.confirmCardPayment(d.client_secret,{payment_method:{card:card,billing_details:{email}}});"
-    + "if(result.error){err.textContent=result.error.message;btn.disabled=false;btn.textContent='Pay $" + product.price + " \u2014 Get Instant Access';}"
+    + "if(result.error){err.textContent=result.error.message;btn.disabled=false;btn.textContent='Pay $" + product.price + " \u2014 Get Instant Access';}}"
     + "else{window.location.href='/store/success?email='+encodeURIComponent(email)+'&product=" + encodeURIComponent(product.name) + "&id=" + product.id + "&pi='+result.paymentIntent.id;}}"
     + "catch(ex){err.textContent='Something went wrong. Please try again.';btn.disabled=false;btn.textContent='Pay $" + product.price + " \u2014 Get Instant Access';}});"
     + "</script></body></html>";
@@ -284,7 +391,6 @@ async function handleRequest(req, res) {
 
     if (pId && pi) recordOrder(pId, email, pi);
 
-    // Generate download token and send email
     if (pId && email) {
       var token    = makeToken(pId);
       var dlUrl    = getBaseUrl() + "/store/download/" + token;
@@ -304,7 +410,6 @@ async function handleRequest(req, res) {
     var product = getProduct(pId);
     if (!product || !product.file_path) { res.writeHead(404); return res.end("File not found."); }
 
-    // Try PDF then HTML
     var filePath = product.file_path;
     if (!fs.existsSync(filePath)) {
       var htmlPath = filePath.replace(".pdf", ".html");
@@ -325,24 +430,23 @@ async function handleRequest(req, res) {
       res.writeHead(200,{"Content-Type":"text/html"});
       return res.end("<form style='padding:40px;font-family:sans-serif'><h2>Store Admin</h2><input name='pw' type='password' placeholder='Password' style='padding:8px;margin:10px 0;display:block'><button>Login</button></form>");
     }
-    var store   = loadStore();
+    var store    = loadStore();
     var totalRev = store.products.reduce(function(s,p){ return s+(p.sales||0)*p.price; },0);
-    var rows    = store.products.map(function(p) {
+    var rows     = store.products.map(function(p) {
       return "<tr><td style='padding:10px;border-bottom:1px solid #f0f0f0'>"+esc(p.name.slice(0,50))+"</td><td style='padding:10px;border-bottom:1px solid #f0f0f0'>$"+p.price+"</td><td style='padding:10px;border-bottom:1px solid #f0f0f0'>"+(p.sales||0)+"</td><td style='padding:10px;border-bottom:1px solid #f0f0f0'>$"+((p.sales||0)*p.price).toFixed(2)+"</td><td style='padding:10px;border-bottom:1px solid #f0f0f0'><a href='/store/buy/"+p.id+"'>View</a></td></tr>";
     }).join("");
     res.writeHead(200,{"Content-Type":"text/html"});
     return res.end("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Store Admin</title></head><body style='font-family:sans-serif;padding:40px;max-width:900px;margin:0 auto'><h1>Store Admin</h1><div style='background:#f0fdf4;border-radius:8px;padding:20px;margin-bottom:24px'><strong>Total Revenue: $"+totalRev.toFixed(2)+"</strong> | Products: "+store.products.length+" | Orders: "+store.orders.length+"</div><table style='width:100%;border-collapse:collapse'><thead><tr style='background:#f9fafb'><th style='padding:10px;text-align:left'>Product</th><th style='padding:10px;text-align:left'>Price</th><th style='padding:10px;text-align:left'>Sales</th><th style='padding:10px;text-align:left'>Revenue</th><th style='padding:10px;text-align:left'>Link</th></tr></thead><tbody>"+rows+"</tbody></table></body></html>");
   }
 
-  return null; // not a store route — let other handlers continue
+  return null;
 }
 
 function startStore() {
-  // Store routes are handled by dashboard/server.js — no separate server needed
   const base = process.env.RAILWAY_PUBLIC_DOMAIN
     ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN
     : "http://localhost:" + (process.env.PORT || 3000);
-  console.log("  ✓  Store available at " + base + "/store");
+  console.log("  \u2713  Store available at " + base + "/store");
 }
 
 function getStoreStats() {
