@@ -723,6 +723,9 @@ function getAccessToken() {
               resolve(r.access_token);
             } else {
               console.log("     → OAuth token error: " + JSON.stringify(r).slice(0,200));
+              if (r.error === "invalid_grant") {
+                console.log("     → TOKEN EXPIRED: Go to developers.google.com/oauthplayground and get a new refresh token. Update YOUTUBE_REFRESH_TOKEN in Railway.");
+              }
               reject(new Error("Token: " + JSON.stringify(r)));
             }
           } catch(e){ reject(e); }
