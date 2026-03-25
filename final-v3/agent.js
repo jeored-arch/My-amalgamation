@@ -19,8 +19,7 @@ const heal      = require("./core/self-healing");
 const products  = require("./core/product-engine");
 const store     = require("./core/store");
 const blogger   = require("./modules/blogger/blogger");
-let reddit = null;
-try { reddit = require("./modules/reddit/reddit"); } catch(e) { console.log("  → Reddit module not found — skipping"); }
+// Reddit — pending API approval
 
 const client     = new Anthropic({ apiKey: config.anthropic.api_key });
 const DATA_DIR   = path.join(process.cwd(), "data");
@@ -229,19 +228,7 @@ async function main() {
     console.log("     → Blogger: " + e.message.slice(0, 100));
   }
 
-  // ── REDDIT ────────────────────────────────────────────────────────────────
-  try {
-    const redditResult = await reddit.run(currentNiche, blogUrl, videoUrl, videoTitle);
-    if (redditResult.status === "complete") {
-      ok(`Reddit post live: r/${redditResult.subreddit}`);
-      await notify.sendTelegram(`🤖 Reddit Post Live!
-r/${redditResult.subreddit}
-${redditResult.url||""}`).catch(()=>{});
-    }
-  } catch(e) {
-    console.log("     → Reddit: " + e.message.slice(0, 100));
-  }
-
+  // ── REDDIT — pending API approval
   // ── PRODUCTS ───────────────────────────────────────────────────────────────
   console.log(c("cyan","\n  🏭 Product creation..."));
   try {
@@ -305,7 +292,7 @@ ${redditResult.url||""}`).catch(()=>{});
   const prodStats  = store.getStoreStats ? store.getStoreStats() : { total_products: 0 };
   const pinStats   = { total_pins: 0 };
   const blogStats   = blogger.getStats();
-  const redditStats = reddit ? reddit.getStats() : { total_posts: 0 };
+  const redditStats = { total_posts: 0 };
 
   console.log(c("green",`\n  ✅  Day ${state.day} done — back at 8am tomorrow`));
   console.log(
@@ -315,7 +302,7 @@ ${redditResult.url||""}`).catch(()=>{});
     `  Brain:      ${ytStats.videos_created} tracked | learning winning\n` +
     `  Products:   ${prodStats.total_products||0} created\n` +
     `  Blog posts: ${blogStats.total_posts||0} published\n` +
-    `  Reddit:     ${redditStats.total_posts||0} posts live\n` +
+
     `  Self-Heal:  ${healReport.total_errors} errors caught | ${healReport.unresolved} unresolved\n` +
     `  Pinterest:  ${pinStats.total_pins} total pins\n`
   );
