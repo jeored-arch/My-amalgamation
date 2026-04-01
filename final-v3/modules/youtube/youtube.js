@@ -1059,9 +1059,47 @@ function getGrowthStatus() {
 // ── YOUTUBE SHORTS ───────────────────────────────────────────────────────────
 
 function buildShort(longVideoPath, ffmpegPath, outputPath) {
-  // Shorts temporarily disabled — revisit after Pinterest is stable
-  console.log("     → Shorts: disabled (coming soon)");
-  return null;
+  try {
+    var exec = require("child_process").execSync;
+
+    // Step 1 — Get video duration to confirm it exists
+    var probeCmd = "\"" + ffmpegPath + "\" -v error -show_entries format=duration -of csv=p=0 \"" + longVideoPath + "\"";
+    var duration = 0;
+    try {
+      duration = parseFloat(exec(probeCmd, { timeout: 15000 }).toString().trim());
+    } catch(e) {
+      // ffprobe not available — assume video is long enough
+      duration = 600;
+    }
+
+    // Step 2 — Take first 58 seconds (the hook — proven best part for retention)
+    // Crop to 9:16 vertical by taking center 1080x1920 crop from 1920x1080 source
+    // This means we crop to 607x1080 from center, then scale to 1080x1920
+    var shortDuration = Math.min(58, duration - 2);
+    var cmd = "\"" + ffmpegPath + "\" -y" +
+      " -ss 0" +
+      " -t " + shortDuration +
+      " -i \"" + longVideoPath + "\"" +
+      " -vf \"crop=607:1080:656:0,scale=1080:1920:flags=lanczos\"" +
+      " -c:v libx264 -preset fast -crf 23" +
+      " -c:a aac -b:a 128k" +
+      " -movflags +faststart" +
+      " \"" + outputPath + "\"";
+
+    console.log("     → Building Short (first " + Math.round(shortDuration) + "s vertical crop)...");
+    exec(cmd, { timeout: 120000 });
+
+    if (require("fs").existsSync(outputPath) && require("fs").statSync(outputPath).size > 50000) {
+      console.log("     ✓ Short built: " + Math.round(require("fs").statSync(outputPath).size / 1024) + "KB");
+      return outputPath;
+    } else {
+      console.log("     → Short build failed — output too small");
+      return null;
+    }
+  } catch(e) {
+    console.log("     → Short build error: " + e.message.slice(0, 120));
+    return null;
+  }
 }
 
 function uploadShort(shortVideoPath, longTitle, tags, accessToken) {
