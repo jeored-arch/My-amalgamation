@@ -1062,25 +1062,13 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
   try {
     var exec = require("child_process").execSync;
 
-    // Step 1 — Get video duration to confirm it exists
-    var probeCmd = "\"" + ffmpegPath + "\" -v error -show_entries format=duration -of csv=p=0 \"" + longVideoPath + "\"";
-    var duration = 0;
-    try {
-      duration = parseFloat(exec(probeCmd, { timeout: 15000 }).toString().trim());
-    } catch(e) {
-      // ffprobe not available — assume video is long enough
-      duration = 600;
-    }
-
-    // Step 2 — Take first 58 seconds (the hook — proven best part for retention)
-    // Crop to 9:16 vertical by taking center 1080x1920 crop from 1920x1080 source
-    // This means we crop to 607x1080 from center, then scale to 1080x1920
-    var shortDuration = Math.min(58, duration - 2);
+    // Step 1 — Use fixed 58 seconds (ffprobe not available in static build)
+    var shortDuration = 58;
     var cmd = "\"" + ffmpegPath + "\" -y" +
       " -ss 0" +
       " -t " + shortDuration +
       " -i \"" + longVideoPath + "\"" +
-      " -vf \"crop=607:1080:656:0,scale=1080:1920:flags=lanczos\"" +
+      " -vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\"" +
       " -c:v libx264 -preset fast -crf 23" +
       " -c:a aac -b:a 128k" +
       " -movflags +faststart" +
