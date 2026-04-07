@@ -886,22 +886,23 @@ function researchTopics(niche, usedTopics) {
       "Generate 8 HIGH-PERFORMING video topics for niche: \"" + activeNiche + "\"\n\n" +
       (brainContext ? brainContext + "\n" : "") +
       "ALREADY USED — DO NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
-      "PROVEN WINNING FORMULAS for this audience (small business owners who fear losing money):\n" +
-      "1. WARNING: [Number] [Tool/Strategy] [Negative Consequence] (EXPOSED)\n" +
-      "2. [Number] [Niche] MISTAKES That Cost Small Business Owners $[Amount]\n" +
-      "3. SECRETS: What [Big Company/IRS/Bank] Hopes You Never Find Out\n" +
-      "4. I [Did X] for [Time Period] — Here\'s the Honest Truth\n" +
-      "5. Stop [Common Advice] — Here\'s What Actually Works in [Year]\n" +
-      "6. The [Dollar Amount] [Niche] Hack Nobody Is Talking About\n" +
-      "7. [Number] Signs Your [Business/Finances] Are in Danger (Fix These Now)\n" +
-      "8. How I [Achieved Result] Without [Common Barrier]\n\n" +
-      "REQUIREMENTS:\n" +
-      "- Every title must trigger fear of loss OR curiosity — not both, pick one and commit\n" +
-      "- Use CAPS on 1-2 power words per title (WARNING, SECRETS, EXPOSED, STOP, NEVER)\n" +
-      "- Include specific dollar amounts and numbers — vague titles get ignored\n" +
-      "- Write for small business owners aged 25-50 who are worried about money\n" +
-      "- Titles 55-75 chars — punchy, no filler words\n" +
-      "- Hooks must be a single sentence that makes them terrified to click away\n\n" +
+      "PROVEN WINNING FORMULAS — ranked by REAL channel data:\n" +
+      "🥇 BEST (16.7% CTR proven): [Number] SECRET [Topic] [Authority] EXPOSED\n" +
+      "🥇 BEST (16.7% CTR proven): [Number] [Topic] Secrets [Villain] Hopes You Never Find Out\n" +
+      "🥈 STRONG: WARNING: [Number] [Tool/Strategy] [Negative Consequence] (EXPOSED)\n" +
+      "🥈 STRONG: EXPOSED: The Hidden [Cost/Truth/Secret] Behind [Popular Thing]\n" +
+      "🥉 GOOD: [Number] [Niche] MISTAKES That Cost Small Business Owners $[Amount]\n" +
+      "🥉 GOOD: IRS [Action] These [Number] [Topic] — Don\'t Get [Consequence]\n" +
+      "4. Stop [Common Advice] — Here\'s What Actually Works in [Year]\n" +
+      "5. How I [Achieved Result] Without [Common Barrier]\n\n" +
+      "CRITICAL RULES based on real performance data:\n" +
+      "- At least 4 of your 8 topics MUST use EXPOSED or SECRET — these get 3x more clicks\n" +
+      "- IRS and tax topics get the highest watch time — include at least 1 per batch\n" +
+      "- Use CAPS on power words: EXPOSED, SECRET, WARNING, NEVER, STOP\n" +
+      "- Include specific dollar amounts — $847, $4,200, $1,000s — vague titles get ignored\n" +
+      "- Write for small business owners aged 25-50 who are worried about money and audits\n" +
+      "- Titles 55-75 chars — punchy, front-load the power word\n" +
+      "- Hooks must make them feel like they\'re about to miss something critical\n\n" +
       "Return ONLY a JSON array:\n" +
       "[{\"title\":\"WARNING: 5 AI Tools Quietly Draining Your Business Budget\",\"hook\":\"I found $847/month in hidden charges across tools my clients were already paying for\",\"angle\":\"warning\",\"niche\":\"" + activeNiche + "\"}]"
     }],
