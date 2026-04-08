@@ -804,7 +804,32 @@ function uploadThumbnail(videoId, thumbnailPath, accessToken) {
 }
 
 // ── INJECT STORE LINK INTO DESCRIPTION ───────────────────────────────────────
-function buildDescription(desc) {
+// Amazon products matched to niche for YouTube descriptions
+var YT_AMAZON_PRODUCTS = [
+  { name: "Atomic Habits",               asin: "0735211299", niches: ["productivity","business","habits","motivation","gen z","first job","remote","gig"] },
+  { name: "I Will Teach You to Be Rich", asin: "0761147489", niches: ["finance","money","budget","gig economy","personal finance","gen z","first job"] },
+  { name: "The Intelligent Investor",    asin: "0060555661", niches: ["investing","finance","stock","wealth","money","market"] },
+  { name: "Profit First",                asin: "073521414X", niches: ["finance","business","money","small business","accounting"] },
+  { name: "The $100 Startup",            asin: "0307951529", niches: ["startup","business","entrepreneur","side hustle","passive income"] },
+  { name: "AI Superpowers",              asin: "132854639X", niches: ["ai","automation","technology","tools","chatgpt"] },
+  { name: "Taxes Made Simple",           asin: "0981454224", niches: ["tax","irs","deduction","audit","gig economy","freelance","small business"] },
+  { name: "Rich Dad Poor Dad",           asin: "1612680194", niches: ["investing","wealth","passive income","finance","money"] },
+  { name: "The Total Money Makeover",    asin: "159555078X", niches: ["finance","debt","budget","money","personal finance","gig","tax"] },
+  { name: "The Gig Economy",             asin: "0814438709", niches: ["gig economy","freelance","uber","side hustle","remote","independent"] },
+];
+
+var YT_ASSOCIATE_ID = process.env.AMAZON_ASSOCIATE_ID || "jeored12-20";
+
+function getYTAmazonLinks(niche, count) {
+  count = count || 2;
+  var lower = (niche || "").toLowerCase();
+  return YT_AMAZON_PRODUCTS
+    .map(function(p) { return Object.assign({}, p, { score: p.niches.filter(function(n){ return lower.includes(n); }).length, url: "https://www.amazon.com/dp/" + p.asin + "?tag=" + YT_ASSOCIATE_ID }); })
+    .sort(function(a,b){ return b.score - a.score; })
+    .slice(0, count);
+}
+
+function buildDescription(desc, niche) {
   var storeUrl = process.env.RAILWAY_PUBLIC_DOMAIN
     ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN + "/store"
     : null;
@@ -812,7 +837,18 @@ function buildDescription(desc) {
     ? "\n\n🛒 GET THE TOOLKIT: " + storeUrl + "\n(Digital guides & toolkits — instant download)"
     : "";
   var affiliateBlock = "\n\n---\n🎙️ The AI voice in this video is powered by ElevenLabs.\nI use it every single day to run my content business.\nTry it free → https://try.elevenlabs.io/2pu1o9y92jl1";
-  return desc + storeBlock + affiliateBlock + "\n\n---\nNew video every day. Subscribe & hit the bell 🔔";
+
+  // Add Amazon book recommendations matched to niche
+  var amazonBlock = "";
+  try {
+    var books = getYTAmazonLinks(niche || "", 2);
+    if (books.length > 0) {
+      amazonBlock = "\n\n📚 RECOMMENDED READING:\n" + books.map(function(b){ return "▶ " + b.name + " → " + b.url; }).join("\n");
+      amazonBlock += "\n(As an Amazon Associate I earn from qualifying purchases)";
+    }
+  } catch(e) {}
+
+  return desc + storeBlock + amazonBlock + affiliateBlock + "\n\n---\nNew video every day. Subscribe & hit the bell 🔔";
 }
 
 function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
@@ -828,7 +864,7 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
     if (cleanTags.length === 0) cleanTags = ["AI tools","small business","productivity"];
 
     var initBody = JSON.stringify({
-      snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: buildDescription(scriptData.description||"Subscribe for daily videos!"), tags: cleanTags, categoryId: "27" },
+      snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: buildDescription(scriptData.description||"Subscribe for daily videos!", scriptData.niche||""), tags: cleanTags, categoryId: "27" },
       status: { privacyStatus: "public", selfDeclaredMadeForKids: false },
     });
     var fileSize = fs.statSync(videoFilePath).size;
@@ -1204,7 +1240,7 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
 function uploadShort(shortVideoPath, longTitle, tags, accessToken) {
   if (!shortVideoPath || !fs.existsSync(shortVideoPath)) return Promise.resolve(null);
   var shortTitle = ("#Shorts " + longTitle).slice(0, 100);
-  var shortDesc  = buildDescription("Watch the full video on our channel for the complete breakdown.") + "\n\n#Shorts #" + (tags[0]||"tips").replace(/[^a-zA-Z0-9]/g,"");
+  var shortDesc  = buildDescription("Watch the full video on our channel for the complete breakdown.", "") + "\n\n#Shorts #" + (tags[0]||"tips").replace(/[^a-zA-Z0-9]/g,"");
 
 
   var initBody = JSON.stringify({
@@ -1305,6 +1341,7 @@ function run(niche, product_url) {
       title:       metaData.title || topicData.title,
       description: metaData.description || "",
       tags:        metaData.tags || [],
+      niche:       niche || "",
     }, thumbPath).then(function(uploadResult) {
       if (uploadResult.status === "success") {
         var logFile = path.join(DATA_DIR,"videos.json");
