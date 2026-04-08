@@ -174,6 +174,44 @@ async function main() {
   console.log(c("cyan","\n  📹 YouTube pipeline..."));
   let videoAngle = "general", videoTitle = "", videoUrl = null, blogUrl = null;
 
+  // Pre-check OAuth token before wasting ElevenLabs credits
+  try {
+    const https = require("https");
+    await new Promise(function(resolve) {
+      var body = "client_id=" + encodeURIComponent(process.env.YOUTUBE_CLIENT_ID||"") +
+        "&client_secret=" + encodeURIComponent(process.env.YOUTUBE_CLIENT_SECRET||"") +
+        "&refresh_token=" + encodeURIComponent(process.env.YOUTUBE_REFRESH_TOKEN||"") +
+        "&grant_type=refresh_token";
+      var req = https.request({ hostname:"oauth2.googleapis.com", path:"/token", method:"POST",
+        headers:{"Content-Type":"application/x-www-form-urlencoded","Content-Length":Buffer.byteLength(body)} },
+        function(res) {
+          var data = "";
+          res.on("data", function(c){ data += c; });
+          res.on("end", function() {
+            try {
+              var r = JSON.parse(data);
+              if (r.error === "invalid_grant") {
+                console.log(c("yellow","  ⚠  OAuth token expired — video will still build but won't upload"));
+                notify.sendTelegram(
+                  "⚠️ <b>YouTube OAuth Token Expired</b>\n\n" +
+                  "Videos are building but NOT uploading.\n\n" +
+                  "Fix: Go to developers.google.com/oauthplayground\n" +
+                  "Select all 4 scopes → Authorize → Exchange → Copy Refresh Token\n" +
+                  "Update YOUTUBE_REFRESH_TOKEN in Railway variables"
+                ).catch(function(){});
+              } else if (r.access_token) {
+                inf("OAuth token valid ✓");
+              }
+            } catch(e) {}
+            resolve();
+          });
+        });
+      req.on("error", function(){ resolve(); });
+      req.write(body);
+      req.end();
+    });
+  } catch(e) {}
+
   if (flags.youtube_upload_paused) {
     wrn("YouTube upload paused by self-healer — building video only");
     await notify.sendTelegram("⏸ YouTube upload still paused — quota issue. Check YouTube Studio.").catch(()=>{});
@@ -265,9 +303,18 @@ async function main() {
       fs.mkdirSync(path.join(process.cwd(),d),{recursive:true})
     );
     const stratBrief = brain.getStrategyBrief(currentNiche);
+    // Pick a random post format so every post feels different
+    const postFormats = [
+      `Write a 700-800 word blog post about "${currentNiche}" from the perspective of someone who learned something the hard way. Start with a personal story or real situation, then share 4-5 specific lessons learned. Use a conversational tone like you are talking to a friend. Do not use a generic intro like "In today's world" or "Are you looking for". Jump straight into the story. End with one clear actionable step the reader can take today. Include a natural mention of a helpful digital guide around the middle of the post.`,
+      `Write a 700-800 word blog post titled something like "What Nobody Tells You About ${currentNiche}". Cover 5 specific things that most beginners get wrong or don't know about. Each point should be 2-3 sentences minimum with real detail — not vague advice. Write in first person like you discovered this yourself. Avoid bullet point lists — write in flowing paragraphs. Do not start with a generic intro. Start with the most surprising or counterintuitive point immediately.`,
+      `Write a 700-800 word blog post about a specific common mistake people make with ${currentNiche}. Open with why this mistake is so costly — use a specific dollar amount or real consequence. Then explain exactly what to do instead with step by step detail. Include at least one specific example or scenario. Write like a knowledgeable friend explaining something over coffee — casual, direct, and genuinely useful. Mention a helpful resource naturally near the end.`,
+      `Write a 700-800 word blog post structured as a real beginner's guide to one specific aspect of ${currentNiche}. Pick one narrow focused topic rather than trying to cover everything. Explain it thoroughly with context, examples, and practical steps. Write for someone who knows nothing about this topic. Use short paragraphs and plain language. Avoid jargon unless you explain it. Do not use a template structure — let the content flow naturally based on what actually needs to be explained.`,
+      `Write a 700-800 word blog post answering the question a beginner would most likely Google about ${currentNiche}. Start your post with that question as the hook. Then answer it thoroughly and honestly — including the parts most articles skip over. Share what actually works versus what sounds good in theory. Use specific numbers, timeframes, and real examples throughout. End with what the reader should do in the next 24 hours based on what they just learned.`,
+    ];
+    const selectedFormat = postFormats[Math.floor(Math.random() * postFormats.length)];
     const blogRes = await client.messages.create({
-      model:config.anthropic.model, max_tokens:1500,
-      messages:[{role:"user",content:`Write a 300-word SEO blog post about "${currentNiche}". Include a compelling title, 3 actionable tips, and a natural mention of a digital guide as a resource. Make it genuinely useful.`}]
+      model:config.anthropic.model, max_tokens:2000,
+      messages:[{role:"user",content:selectedFormat}]
     });
     fs.writeFileSync(path.join(process.cwd(),"output/content",`post-day-${state.day+1}.md`),
       `# Day ${state.day+1} — ${currentNiche}\n\n${blogRes.content[0].text}`);
