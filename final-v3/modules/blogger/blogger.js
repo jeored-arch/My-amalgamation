@@ -9,6 +9,52 @@ const CLIENT_SECRET = process.env.YOUTUBE_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.YOUTUBE_REFRESH_TOKEN;
 const STORE_DOMAIN  = process.env.RAILWAY_PUBLIC_DOMAIN || "dailysmallbizai.com";
 const ELEVENLABS_LINK = "https://try.elevenlabs.io/2pu1o9y92jl1";
+const ASSOCIATE_ID  = process.env.AMAZON_ASSOCIATE_ID || "jeored12-20";
+
+function amazonLink(asin) {
+  return "https://www.amazon.com/dp/" + asin + "?tag=" + ASSOCIATE_ID;
+}
+
+// Evergreen Amazon products matched to niche
+var AMAZON_PRODUCTS = [
+  // Business & Entrepreneurship
+  { name: "Atomic Habits",                    asin: "0735211299", niches: ["productivity","business","habits","motivation","self improvement","remote","gig","gen z","first job"] },
+  { name: "The $100 Startup",                 asin: "0307951529", niches: ["startup","business","entrepreneur","side hustle","passive income","first job"] },
+  { name: "Profit First",                     asin: "073521414X", niches: ["finance","business","money","accounting","small business","profit","revenue"] },
+  { name: "Building a StoryBrand",            asin: "0718033329", niches: ["marketing","business","content","branding","sales","small business"] },
+  { name: "The Lean Startup",                 asin: "0307887898", niches: ["startup","business","entrepreneur","product","side hustle","automation"] },
+  { name: "Company of One",                   asin: "0358033969", niches: ["solopreneur","freelance","business","small business","entrepreneur","remote"] },
+  // Finance & Investing
+  { name: "The Intelligent Investor",         asin: "0060555661", niches: ["investing","finance","stock","wealth","money","portfolio","market"] },
+  { name: "I Will Teach You to Be Rich",      asin: "0761147489", niches: ["finance","money","budget","gig economy","personal finance","gen z","first job","remote"] },
+  { name: "The Total Money Makeover",         asin: "159555078X", niches: ["finance","debt","budget","money","personal finance","gig","tax"] },
+  { name: "Rich Dad Poor Dad",                asin: "1612680194", niches: ["investing","wealth","passive income","finance","money","real estate"] },
+  { name: "The Simple Path to Wealth",        asin: "1533667926", niches: ["investing","stock","index fund","wealth","passive income","finance","retirement"] },
+  { name: "Your Money or Your Life",          asin: "0143115766", niches: ["personal finance","budget","frugal","gen z","first job","gig economy","remote"] },
+  // Tax & IRS
+  { name: "Taxes Made Simple",                asin: "0981454224", niches: ["tax","irs","deduction","audit","gig economy","freelance","small business"] },
+  { name: "J.K. Lasser Your Income Tax",      asin: "1119839270", niches: ["tax","irs","deduction","audit","income","small business","gig"] },
+  // AI & Tech
+  { name: "AI Superpowers",                   asin: "132854639X", niches: ["ai","automation","technology","business","future","investing","tools"] },
+  { name: "The ChatGPT Millionaire",          asin: "B0BW1W8VTG", niches: ["ai","chatgpt","automation","small business","tools","side hustle","passive income"] },
+  { name: "Human + Machine",                  asin: "1633693864", niches: ["ai","automation","business","technology","tools","productivity"] },
+  // Content & YouTube
+  { name: "Blue Yeti USB Microphone",         asin: "B00N1YPXW2", niches: ["content","youtube","creator","video","voice","podcasting"] },
+  { name: "Show Your Work",                   asin: "076117897X", niches: ["content","marketing","creator","social media","personal brand","youtube"] },
+  { name: "Crush It",                         asin: "0062295020", niches: ["content","social media","youtube","creator","personal brand","entrepreneur"] },
+  // Credit & Gig Economy
+  { name: "The Credit Repair Black Book",     asin: "B08BNPZ7J6", niches: ["credit","debt","score","finance","money","gig economy","gen z"] },
+  { name: "The Gig Economy",                  asin: "0814438709", niches: ["gig economy","freelance","uber","doordash","side hustle","remote","independent"] },
+];
+
+function getAmazonLinksForNiche(nicheName, count) {
+  count = count || 3;
+  var lower = (nicheName || "").toLowerCase();
+  return AMAZON_PRODUCTS
+    .map(function(p) { return Object.assign({}, p, { url: amazonLink(p.asin), score: p.niches.filter(function(n){ return lower.includes(n); }).length }); })
+    .sort(function(a,b){ return b.score - a.score; })
+    .slice(0, count);
+}
 
 const STATS_FILE = path.join(process.cwd(), "data", "blogger-stats.json");
 
@@ -61,6 +107,22 @@ function extractVideoId(url) {
 
 // ── BUILD FULL STYLED POST ────────────────────────────────────────────────────
 function buildPostHTML(niche, blogContent, videoUrl, productUrl) {
+  // Get Amazon affiliate products for this niche
+  var amazonProducts = getAmazonLinksForNiche(niche, 3);
+  var amazonSection = "";
+  if (amazonProducts.length > 0) {
+    var amazonItems = amazonProducts.map(function(p) {
+      return '<a href="' + p.url + '" target="_blank" style="display:block;padding:10px 12px;margin:6px 0;background:#fff;border:1px solid #e0e0e0;border-radius:6px;text-decoration:none;color:#1a1a2e;font-family:Arial,sans-serif;font-size:13px;">'  + '📚 ' + p.name + ' →</a>';
+    }).join("");
+    amazonSection = `
+    <div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin:32px 0;">
+      <h3 style="font-family:Arial,sans-serif;font-size:17px;color:#1a1a2e;margin:0 0 12px 0;">📚 Recommended Reading</h3>
+      <p style="font-family:Arial,sans-serif;font-size:13px;color:#666;margin:0 0 12px 0;">Books and resources that go deeper on this topic:</p>
+      ${amazonItems}
+      <p style="font-family:Arial,sans-serif;font-size:11px;color:#999;margin:12px 0 0 0;">As an Amazon Associate I earn from qualifying purchases.</p>
+    </div>`;
+  }
+
   var storeUrl  = "https://" + STORE_DOMAIN + "/store";
   var videoId   = videoUrl ? extractVideoId(videoUrl) : null;
   var today     = new Date().toLocaleDateString("en-US", { year:"numeric", month:"long", day:"numeric" });
@@ -143,7 +205,7 @@ function buildPostHTML(niche, blogContent, videoUrl, productUrl) {
       </p>
     </div>`;
 
-  return header + videoSection + contentSection + affiliateSection + storeSection + footerSection;
+  return header + videoSection + contentSection + amazonSection + affiliateSection + storeSection + footerSection;
 }
 
 // ── PARSE BLOG CONTENT INTO STYLED SECTIONS ───────────────────────────────────
