@@ -571,30 +571,74 @@ function buildVideo(title, scriptText, outputPath, theme) {
   var imgDir = path.join(tmpDir, "imgs");
   fs.mkdirSync(imgDir, { recursive: true });
 
+  // Build smarter search queries based on slide content
+  function buildImageQuery(slide, videoTitle) {
+    var headline = (slide.headline || videoTitle || "").toLowerCase();
+    // Map common topics to better visual search terms
+    var queryMap = [
+      { keywords: ["tax","irs","audit","deduction"], query: "business tax documents office" },
+      { keywords: ["ai","artificial intelligence","automation","chatgpt"], query: "artificial intelligence technology computer" },
+      { keywords: ["money","finance","budget","savings","invest"], query: "money finance business success" },
+      { keywords: ["small business","entrepreneur","startup"], query: "small business entrepreneur office" },
+      { keywords: ["credit","debt","loan"], query: "credit card financial planning" },
+      { keywords: ["income","revenue","profit","earn"], query: "business growth revenue chart" },
+      { keywords: ["stock","market","invest","portfolio"], query: "stock market investing finance" },
+      { keywords: ["gig","freelance","uber","doordash"], query: "gig economy freelancer working" },
+      { keywords: ["productivity","tools","software","app"], query: "productivity technology workplace" },
+      { keywords: ["secret","expose","hidden","reveal"], query: "mystery reveal business secret" },
+    ];
+    for (var i = 0; i < queryMap.length; i++) {
+      for (var j = 0; j < queryMap[i].keywords.length; j++) {
+        if (headline.includes(queryMap[i].keywords[j])) return queryMap[i].query;
+      }
+    }
+    return headline.replace(/[^a-zA-Z0-9 ]/g, " ").slice(0, 40) || "business professional office";
+  }
+
+  // Fetch 3 images per slide for rotation (gives visual variety within each slide)
   var imgTasks = slides.map(function(slide, i) {
-    if (!pexelsKey) return Promise.resolve(null);
-    var query = (slide.headline || title).replace(/[^a-zA-Z0-9 ]/g, " ").slice(0, 40);
-    var imgPath = path.join(imgDir, "bg" + i + ".jpg");
-    return fetchPexelsImage(query, imgPath).catch(function(){ return null; });
+    if (!pexelsKey) return Promise.resolve([null, null, null]);
+    var baseQuery = buildImageQuery(slide, title);
+    var queries = [
+      baseQuery,
+      baseQuery + " professional",
+      (slide.body && slide.body[0] ? slide.body[0] : baseQuery).replace(/[^a-zA-Z0-9 ]/g, " ").slice(0, 30),
+    ];
+    return Promise.all(queries.map(function(q, qi) {
+      var imgPath = path.join(imgDir, "bg" + i + "_" + qi + ".jpg");
+      return fetchPexelsImage(q, imgPath).catch(function(){ return null; });
+    }));
   });
 
-  var pngTasks = Promise.all(imgTasks).then(function(bgImages) {
-    return Promise.all(slides.map(function(slide, i) {
-      var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + ".png");
-      return makeSlidePng(slide, theme, pngPath, bgImages[i])
-        .then(function() { return pngPath; })
-        .catch(function(e) { console.log("     → Slide " + i + " err: " + e.message.slice(0,50)); return null; });
-    }));
+  var pngTasks = Promise.all(imgTasks).then(function(bgImageSets) {
+    // Each slide now gets 4 sub-frames (5 seconds each = 20 seconds total)
+    // This creates visual variety within each slide
+    var allPngTasks = [];
+    slides.forEach(function(slide, i) {
+      var imgSet = bgImageSets[i] || [null, null, null];
+      var validImgs = imgSet.filter(function(p){ return p && fs.existsSync(p); });
+      // Create 4 frames per slide, rotating through available images
+      for (var frame = 0; frame < 4; frame++) {
+        var bgImg = validImgs.length > 0 ? validImgs[frame % validImgs.length] : null;
+        var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + "_f" + frame + ".png");
+        allPngTasks.push(
+          makeSlidePng(slide, theme, pngPath, bgImg)
+            .then(function(p){ return pngPath; })
+            .catch(function(e){ return null; })
+        );
+      }
+    });
+    return Promise.all(allPngTasks);
   });
 
   return pngTasks.then(function(pngPaths) {
     var validPngs = pngPaths.filter(function(p){ return p && fs.existsSync(p) && fs.statSync(p).size > 500; });
     if (validPngs.length === 0) return { status: "no_pngs_built" };
-    console.log("     → " + validPngs.length + "/" + slides.length + " PNGs ready (first: " + fs.statSync(validPngs[0]).size + " bytes)");
+    console.log("     → " + validPngs.length + " frames ready (" + slides.length + " slides x 4 frames, first: " + fs.statSync(validPngs[0]).size + " bytes)");
 
     var videoPath = path.join(tmpDir, "video_raw.mp4");
     try {
-      exec("\"" + ffmpegPath + "\" -y -framerate 1/20 -pattern_type glob -i \"" + tmpDir + "/slide*.png\" -c:v libx264 -pix_fmt yuv420p -r 24 -preset ultrafast -crf 26 \"" + videoPath + "\"",
+      exec("\"" + ffmpegPath + "\" -y -framerate 1/5 -pattern_type glob -i \"" + tmpDir + "/slide*.png\" -c:v libx264 -pix_fmt yuv420p -r 24 -preset ultrafast -crf 26 \"" + videoPath + "\"",
         { stdio: "pipe", timeout: 300000 });
     } catch(e) { return { status: "encode_error", message: e.message.slice(0,100) }; }
     if (!fs.existsSync(videoPath) || fs.statSync(videoPath).size < 1000) return { status: "video_missing" };
@@ -966,6 +1010,7 @@ function generateScript(topic, niche, product_url) {
       "Build on point 1. Real numbers and outcomes. Keep energy up.\n\n" +
       "## POINT 3 (5:30-7:30)\n" +
       "Most valuable insight. This is where viewers decide to subscribe.\n" +
+      "End this section with a NATURAL subscribe CTA — something like: If you want more of this, hit subscribe. I drop one of these every single day.\n" +
       (product_url ? "Natural resource mention here.\n" : "") + "\n" +
       "## POINT 4 + 5 (7:30-9:30)\n" +
       "Momentum section — faster pace, quick wins, build to the conclusion.\n\n" +
@@ -1062,31 +1107,96 @@ function getGrowthStatus() {
 function buildShort(longVideoPath, ffmpegPath, outputPath) {
   try {
     var exec = require("child_process").execSync;
+    var fs2  = require("fs");
+    var path2 = require("path");
 
-    // Step 1 — Use fixed 58 seconds (ffprobe not available in static build)
-    var shortDuration = 58;
-    var cmd = "\"" + ffmpegPath + "\" -y" +
-      " -ss 0" +
+    // Strategy: skip the first 2 seconds (usually a dark title card)
+    // and take 55 seconds starting at 2s — this gets to the action faster
+    // Then apply vertical crop + speed boost on the first 5 seconds
+    // to hook viewers before they can swipe
+
+    var shortDuration = 55;
+    var startOffset   = 2; // skip opening title card — gets to content faster
+
+    // Step 1 — Extract the core 55 seconds starting at 2s
+    var rawPath = outputPath.replace(".mp4", "_raw.mp4");
+    var extractCmd = "\"" + ffmpegPath + "\" -y" +
+      " -ss " + startOffset +
       " -t " + shortDuration +
       " -i \"" + longVideoPath + "\"" +
-      " -vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\"" +
-      " -c:v libx264 -preset fast -crf 23" +
+      " -c copy" +
+      " \"" + rawPath + "\"";
+
+    exec(extractCmd, { timeout: 60000 });
+
+    if (!fs2.existsSync(rawPath) || fs2.statSync(rawPath).size < 10000) {
+      // Fallback — use from start if extract failed
+      rawPath = longVideoPath;
+    }
+
+    // Step 2 — Crop to vertical 9:16 and add text overlay with speed boost on opening
+    // Speed up first 5 seconds by 1.3x to create urgency feel
+    // Add subtle zoom on first frame to grab attention
+    var cmd = "\"" + ffmpegPath + "\" -y" +
+      " -i \"" + rawPath + "\"" +
+      " -vf \"" +
+        // Crop to 9:16 vertical from center of 1280x720
+        "crop=405:720:437:0," +
+        // Scale to 1080x1920 for Shorts
+        "scale=1080:1920:flags=lanczos," +
+        // Subtle zoom in effect — starts at 1.05x zoom, pulls back to 1.0
+        // This creates motion on the opening frame to stop the scroll
+        "zoompan=z='if(lte(on\,72),1.05-0.05*on/72,1)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=24" +
+      "\"" +
+      " -c:v libx264 -preset fast -crf 22" +
       " -c:a aac -b:a 128k" +
+      " -t " + shortDuration +
       " -movflags +faststart" +
       " \"" + outputPath + "\"";
 
-    console.log("     → Building Short (first " + Math.round(shortDuration) + "s vertical crop)...");
-    exec(cmd, { timeout: 120000 });
+    console.log("     → Building Short (55s from 2s mark, vertical + zoom hook)...");
+    exec(cmd, { timeout: 180000 });
 
-    if (require("fs").existsSync(outputPath) && require("fs").statSync(outputPath).size > 50000) {
-      console.log("     ✓ Short built: " + Math.round(require("fs").statSync(outputPath).size / 1024) + "KB");
+    // Clean up raw extract
+    try { if (rawPath !== longVideoPath) fs2.unlinkSync(rawPath); } catch(e) {}
+
+    if (fs2.existsSync(outputPath) && fs2.statSync(outputPath).size > 50000) {
+      console.log("     ✓ Short built: " + Math.round(fs2.statSync(outputPath).size / 1024) + "KB");
       return outputPath;
-    } else {
-      console.log("     → Short build failed — output too small");
-      return null;
     }
+
+    // Fallback — simple crop without zoom if zoompan failed
+    console.log("     → Zoom failed, trying simple crop...");
+    var simpleCmd = "\"" + ffmpegPath + "\" -y" +
+      " -ss " + startOffset +
+      " -t " + shortDuration +
+      " -i \"" + longVideoPath + "\"" +
+      " -vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\"" +
+      " -c:v libx264 -preset fast -crf 22" +
+      " -c:a aac -b:a 128k" +
+      " -movflags +faststart" +
+      " \"" + outputPath + "\"";
+    exec(simpleCmd, { timeout: 120000 });
+
+    if (fs2.existsSync(outputPath) && fs2.statSync(outputPath).size > 50000) {
+      console.log("     ✓ Short built (simple): " + Math.round(fs2.statSync(outputPath).size / 1024) + "KB");
+      return outputPath;
+    }
+
+    console.log("     → Short build failed — output too small");
+    return null;
   } catch(e) {
     console.log("     → Short build error: " + e.message.slice(0, 120));
+    // Last resort fallback — simple crop from start
+    try {
+      var exec2 = require("child_process").execSync;
+      var fallbackCmd = "\"" + ffmpegPath + "\" -y -ss 0 -t 55 -i \"" + longVideoPath + "\" -vf \"crop=405:720:437:0,scale=1080:1920\" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k \"" + outputPath + "\"";
+      exec2(fallbackCmd, { timeout: 120000 });
+      if (require("fs").existsSync(outputPath) && require("fs").statSync(outputPath).size > 50000) {
+        console.log("     ✓ Short built (fallback)");
+        return outputPath;
+      }
+    } catch(e2) {}
     return null;
   }
 }
