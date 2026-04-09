@@ -439,11 +439,17 @@ function scriptToSlides(title, scriptText) {
 function generateMusic(ffmpegPath, durationSecs, outputPath) {
   if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 10000) return outputPath;
   try {
-    require("child_process").execSync(
-      "\"" + ffmpegPath + "\" -y -f lavfi -i \"sine=frequency=220:duration=" + (durationSecs+5) + "\" -filter_complex \"volume=0.05\" -c:a aac \"" + outputPath + "\"",
-      { stdio: "pipe", timeout: 30000 }
+    // Use spawn instead of execSync to avoid ETIMEDOUT on long durations
+    var result = require("child_process").spawnSync(
+      ffmpegPath,
+      ["-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=" + (durationSecs+5),
+       "-filter_complex", "volume=0.05", "-c:a", "aac", outputPath],
+      { stdio: "pipe", timeout: 60000 }
     );
-    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) { console.log("     ✓ Background music generated"); return outputPath; }
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+      console.log("     ✓ Background music generated");
+      return outputPath;
+    }
   } catch(e) { console.log("     → Music error: " + e.message.slice(0,60)); }
   return null;
 }
@@ -611,34 +617,27 @@ function buildVideo(title, scriptText, outputPath, theme) {
   });
 
   var pngTasks = Promise.all(imgTasks).then(function(bgImageSets) {
-    // Each slide now gets 4 sub-frames (5 seconds each = 20 seconds total)
-    // This creates visual variety within each slide
-    var allPngTasks = [];
-    slides.forEach(function(slide, i) {
+    // One PNG per slide — use best available image from the set
+    return Promise.all(slides.map(function(slide, i) {
       var imgSet = bgImageSets[i] || [null, null, null];
       var validImgs = imgSet.filter(function(p){ return p && fs.existsSync(p); });
-      // Create 4 frames per slide, rotating through available images
-      for (var frame = 0; frame < 4; frame++) {
-        var bgImg = validImgs.length > 0 ? validImgs[frame % validImgs.length] : null;
-        var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + "_f" + frame + ".png");
-        allPngTasks.push(
-          makeSlidePng(slide, theme, pngPath, bgImg)
-            .then(function(p){ return pngPath; })
-            .catch(function(e){ return null; })
-        );
-      }
-    });
-    return Promise.all(allPngTasks);
+      // Rotate which image is used per slide for visual variety across slides
+      var bgImg = validImgs.length > 0 ? validImgs[i % validImgs.length] : null;
+      var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + ".png");
+      return makeSlidePng(slide, theme, pngPath, bgImg)
+        .then(function() { return pngPath; })
+        .catch(function(e) { console.log("     → Slide " + i + " err: " + e.message.slice(0,50)); return null; });
+    }));
   });
 
   return pngTasks.then(function(pngPaths) {
     var validPngs = pngPaths.filter(function(p){ return p && fs.existsSync(p) && fs.statSync(p).size > 500; });
     if (validPngs.length === 0) return { status: "no_pngs_built" };
-    console.log("     → " + validPngs.length + " frames ready (" + slides.length + " slides x 4 frames, first: " + fs.statSync(validPngs[0]).size + " bytes)");
+    console.log("     → " + validPngs.length + "/" + slides.length + " PNGs ready (first: " + fs.statSync(validPngs[0]).size + " bytes)");
 
     var videoPath = path.join(tmpDir, "video_raw.mp4");
     try {
-      exec("\"" + ffmpegPath + "\" -y -framerate 1/5 -pattern_type glob -i \"" + tmpDir + "/slide*.png\" -c:v libx264 -pix_fmt yuv420p -r 24 -preset ultrafast -crf 26 \"" + videoPath + "\"",
+      exec("\"" + ffmpegPath + "\" -y -framerate 1/20 -pattern_type glob -i \"" + tmpDir + "/slide*.png\" -c:v libx264 -pix_fmt yuv420p -r 24 -preset ultrafast -crf 26 \"" + videoPath + "\"",
         { stdio: "pipe", timeout: 300000 });
     } catch(e) { return { status: "encode_error", message: e.message.slice(0,100) }; }
     if (!fs.existsSync(videoPath) || fs.statSync(videoPath).size < 1000) return { status: "video_missing" };
@@ -1170,28 +1169,18 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
       rawPath = longVideoPath;
     }
 
-    // Step 2 — Crop to vertical 9:16 and add text overlay with speed boost on opening
-    // Speed up first 5 seconds by 1.3x to create urgency feel
-    // Add subtle zoom on first frame to grab attention
+    // Step 2 — Clean simple crop to 9:16 vertical — fast and reliable
     var cmd = "\"" + ffmpegPath + "\" -y" +
       " -i \"" + rawPath + "\"" +
-      " -vf \"" +
-        // Crop to 9:16 vertical from center of 1280x720
-        "crop=405:720:437:0," +
-        // Scale to 1080x1920 for Shorts
-        "scale=1080:1920:flags=lanczos," +
-        // Subtle zoom in effect — starts at 1.05x zoom, pulls back to 1.0
-        // This creates motion on the opening frame to stop the scroll
-        "zoompan=z='if(lte(on\,72),1.05-0.05*on/72,1)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=24" +
-      "\"" +
+      " -vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\"" +
       " -c:v libx264 -preset fast -crf 22" +
       " -c:a aac -b:a 128k" +
       " -t " + shortDuration +
       " -movflags +faststart" +
       " \"" + outputPath + "\"";
 
-    console.log("     → Building Short (55s from 2s mark, vertical + zoom hook)...");
-    exec(cmd, { timeout: 180000 });
+    console.log("     → Building Short (55s from 2s mark, vertical crop)...");
+    exec(cmd, { timeout: 120000 });
 
     // Clean up raw extract
     try { if (rawPath !== longVideoPath) fs2.unlinkSync(rawPath); } catch(e) {}
@@ -1200,19 +1189,6 @@ function buildShort(longVideoPath, ffmpegPath, outputPath) {
       console.log("     ✓ Short built: " + Math.round(fs2.statSync(outputPath).size / 1024) + "KB");
       return outputPath;
     }
-
-    // Fallback — simple crop without zoom if zoompan failed
-    console.log("     → Zoom failed, trying simple crop...");
-    var simpleCmd = "\"" + ffmpegPath + "\" -y" +
-      " -ss " + startOffset +
-      " -t " + shortDuration +
-      " -i \"" + longVideoPath + "\"" +
-      " -vf \"crop=405:720:437:0,scale=1080:1920:flags=lanczos\"" +
-      " -c:v libx264 -preset fast -crf 22" +
-      " -c:a aac -b:a 128k" +
-      " -movflags +faststart" +
-      " \"" + outputPath + "\"";
-    exec(simpleCmd, { timeout: 120000 });
 
     if (fs2.existsSync(outputPath) && fs2.statSync(outputPath).size > 50000) {
       console.log("     ✓ Short built (simple): " + Math.round(fs2.statSync(outputPath).size / 1024) + "KB");
