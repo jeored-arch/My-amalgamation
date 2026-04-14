@@ -285,6 +285,77 @@ function fetchPexelsImage(query, outputPath) {
   });
 }
 
+// ── PEXELS VIDEO FETCH ───────────────────────────────────────────────────────
+
+function fetchPexelsVideo(query, outputPath) {
+  var apiKey = process.env.PEXELS_API_KEY || config.pexels_api_key || "";
+  if (!apiKey) return Promise.resolve(null);
+  return new Promise(function(resolve) {
+    var q = encodeURIComponent((query || "business").slice(0, 50));
+    var opts = {
+      hostname: "api.pexels.com",
+      path: "/videos/search?query=" + q + "&per_page=5&orientation=landscape&size=medium",
+      headers: { "Authorization": apiKey }
+    };
+    var req = https.request(opts, function(res) {
+      var d = "";
+      res.on("data", function(c){ d += c; });
+      res.on("end", function() {
+        try {
+          var data = JSON.parse(d);
+          var videos = (data.videos || []);
+          if (!videos.length) return resolve(null);
+          // Pick random from top 5
+          var video = videos[Math.floor(Math.random() * Math.min(videos.length, 5))];
+          // Get the medium quality file (not too large)
+          var files = video.video_files || [];
+          var file = files.find(function(f){ return f.quality === "hd" && f.width <= 1280; }) ||
+                     files.find(function(f){ return f.quality === "sd"; }) ||
+                     files[0];
+          if (!file || !file.link) return resolve(null);
+
+          var vidUrl = require("url").parse(file.link);
+          var vidReq = https.request({
+            hostname: vidUrl.hostname,
+            path: vidUrl.path,
+            headers: { "Authorization": apiKey }
+          }, function(vidRes) {
+            // Follow redirects
+            if (vidRes.statusCode === 301 || vidRes.statusCode === 302) {
+              var redir = require("url").parse(vidRes.headers.location);
+              var rreq = https.request({ hostname: redir.hostname, path: redir.path + (redir.search||"") }, function(rres) {
+                var chunks = [];
+                rres.on("data", function(c){ chunks.push(c); });
+                rres.on("end", function() {
+                  var buf = Buffer.concat(chunks);
+                  if (buf.length < 50000) return resolve(null);
+                  fs.writeFileSync(outputPath, buf);
+                  resolve(outputPath);
+                });
+              });
+              rreq.on("error", function(){ resolve(null); });
+              rreq.end();
+              return;
+            }
+            var chunks = [];
+            vidRes.on("data", function(c){ chunks.push(c); });
+            vidRes.on("end", function() {
+              var buf = Buffer.concat(chunks);
+              if (buf.length < 50000) return resolve(null);
+              fs.writeFileSync(outputPath, buf);
+              resolve(outputPath);
+            });
+          });
+          vidReq.on("error", function(){ resolve(null); });
+          vidReq.end();
+        } catch(e) { resolve(null); }
+      });
+    });
+    req.on("error", function(){ resolve(null); });
+    req.end();
+  });
+}
+
 // ── SLIDE RENDERER ────────────────────────────────────────────────────────────
 
 function makeSlidePng(slide, theme, outputPath, bgImagePath) {
@@ -413,7 +484,7 @@ function scriptToSlides(title, scriptText) {
     }
   }
 
-  for (var i = 0; i < lines.length && slides.length < 27; i++) {
+  for (var i = 0; i < lines.length && slides.length < 37; i++) {
     var raw = lines[i], clean = raw.replace(/^#+\s*/,"").replace(/\*\*/g,"").trim();
     var isHeader = raw.startsWith("#") || /^(step|tip|point|section|intro|conclusion|outro|hook|number|\d+[\.\)])/i.test(clean);
     if (isHeader && slides.length > 0) { flush(); currentSection = clean.slice(0,65); }
@@ -429,7 +500,7 @@ function scriptToSlides(title, scriptText) {
     { headline: "Reality Check",  body: ["Here is what nobody tells you upfront", "The honest truth about what actually works"] },
   ];
   var fi = 0;
-  while (slides.length < 28) { slides.push({ type: "section", headline: fillers[fi % fillers.length].headline, body: fillers[fi % fillers.length].body }); fi++; }
+  while (slides.length < 38) { slides.push({ type: "section", headline: fillers[fi % fillers.length].headline, body: fillers[fi % fillers.length].body }); fi++; }
   slides.push({ type: "cta", headline: "Like and Subscribe!", body: ["New videos every single day", "Hit the bell so you never miss one"], cta: "Subscribe Now — It is Free!" });
   return slides;
 }
@@ -580,7 +651,6 @@ function buildVideo(title, scriptText, outputPath, theme) {
   // Build smarter search queries based on slide content
   function buildImageQuery(slide, videoTitle) {
     var headline = (slide.headline || videoTitle || "").toLowerCase();
-    // Map common topics to better visual search terms
     var queryMap = [
       { keywords: ["tax","irs","audit","deduction"], query: "business tax documents office" },
       { keywords: ["ai","artificial intelligence","automation","chatgpt"], query: "artificial intelligence technology computer" },
@@ -591,7 +661,9 @@ function buildVideo(title, scriptText, outputPath, theme) {
       { keywords: ["stock","market","invest","portfolio"], query: "stock market investing finance" },
       { keywords: ["gig","freelance","uber","doordash"], query: "gig economy freelancer working" },
       { keywords: ["productivity","tools","software","app"], query: "productivity technology workplace" },
-      { keywords: ["secret","expose","hidden","reveal"], query: "mystery reveal business secret" },
+      { keywords: ["secret","expose","hidden","reveal"], query: "business secret reveal shocking" },
+      { keywords: ["warning","danger","mistake","error"], query: "business warning danger alarm" },
+      { keywords: ["salary","job","career","employer","hr"], query: "office career professional workplace" },
     ];
     for (var i = 0; i < queryMap.length; i++) {
       for (var j = 0; j < queryMap[i].keywords.length; j++) {
@@ -601,33 +673,60 @@ function buildVideo(title, scriptText, outputPath, theme) {
     return headline.replace(/[^a-zA-Z0-9 ]/g, " ").slice(0, 40) || "business professional office";
   }
 
-  // Fetch 3 images per slide for rotation (gives visual variety within each slide)
+  // Fetch Pexels VIDEO clips per slide — falls back to image if video unavailable
+  // Videos make backgrounds dynamic and dramatically improve visual quality
+  var vidDir = path.join(tmpDir, "vids");
+  fs.mkdirSync(vidDir, { recursive: true });
+
   var imgTasks = slides.map(function(slide, i) {
-    if (!pexelsKey) return Promise.resolve([null, null, null]);
-    var baseQuery = buildImageQuery(slide, title);
-    var queries = [
-      baseQuery,
-      baseQuery + " professional",
-      (slide.body && slide.body[0] ? slide.body[0] : baseQuery).replace(/[^a-zA-Z0-9 ]/g, " ").slice(0, 30),
-    ];
-    return Promise.all(queries.map(function(q, qi) {
-      var imgPath = path.join(imgDir, "bg" + i + "_" + qi + ".jpg");
-      return fetchPexelsImage(q, imgPath).catch(function(){ return null; });
-    }));
+    if (!pexelsKey) return Promise.resolve({ video: null, image: null });
+    var query = buildImageQuery(slide, title);
+    var vidPath = path.join(vidDir, "bg" + i + ".mp4");
+    var imgPath = path.join(imgDir, "bg" + i + ".jpg");
+    // Try video first, fall back to image
+    return fetchPexelsVideo(query, vidPath).then(function(vp) {
+      if (vp) return { video: vp, image: null };
+      // Video failed — use image fallback
+      return fetchPexelsImage(query, imgPath).then(function(ip) {
+        return { video: null, image: ip };
+      });
+    }).catch(function() {
+      return { video: null, image: null };
+    });
   });
 
-  var pngTasks = Promise.all(imgTasks).then(function(bgImageSets) {
-    // One PNG per slide — use best available image from the set
-    return Promise.all(slides.map(function(slide, i) {
-      var imgSet = bgImageSets[i] || [null, null, null];
-      var validImgs = imgSet.filter(function(p){ return p && fs.existsSync(p); });
-      // Rotate which image is used per slide for visual variety across slides
-      var bgImg = validImgs.length > 0 ? validImgs[i % validImgs.length] : null;
-      var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + ".png");
-      return makeSlidePng(slide, theme, pngPath, bgImg)
-        .then(function() { return pngPath; })
-        .catch(function(e) { console.log("     → Slide " + i + " err: " + e.message.slice(0,50)); return null; });
-    }));
+  var pngTasks = Promise.all(imgTasks).then(function(bgAssets) {
+    // Extract a still frame from video clips to use as slide background
+    var framePromises = bgAssets.map(function(asset, i) {
+      if (asset && asset.video && fs.existsSync(asset.video)) {
+        // Extract frame at 1 second from video clip
+        var framePath = path.join(imgDir, "frame" + i + ".jpg");
+        try {
+          var ffmpegPath = findFfmpeg();
+          if (ffmpegPath) {
+            require("child_process").execSync(
+              "\"" + ffmpegPath + "\" -y -ss 1 -i \"" + asset.video + "\" -vframes 1 -q:v 2 \"" + framePath + "\"",
+              { stdio: "pipe", timeout: 15000 }
+            );
+            if (fs.existsSync(framePath) && fs.statSync(framePath).size > 5000) {
+              return Promise.resolve(framePath);
+            }
+          }
+        } catch(e) {}
+      }
+      // Use image if video failed or unavailable
+      return Promise.resolve(asset && asset.image ? asset.image : null);
+    });
+
+    return Promise.all(framePromises).then(function(bgImages) {
+      return Promise.all(slides.map(function(slide, i) {
+        var bgImg = bgImages[i] || null;
+        var pngPath = path.join(tmpDir, "slide" + String(i).padStart(3,"0") + ".png");
+        return makeSlidePng(slide, theme, pngPath, bgImg)
+          .then(function() { return pngPath; })
+          .catch(function(e) { console.log("     → Slide " + i + " err: " + e.message.slice(0,50)); return null; });
+      }));
+    });
   });
 
   return pngTasks.then(function(pngPaths) {
@@ -835,15 +934,21 @@ function buildDescription(desc, niche) {
   var storeBlock = storeUrl
     ? "\n\n🛒 GET THE TOOLKIT: " + storeUrl + "\n(Digital guides & toolkits — instant download)"
     : "";
-  var affiliateBlock = "\n\n---\n🎙️ The AI voice in this video is powered by ElevenLabs.\nI use it every single day to run my content business.\nTry it free → https://try.elevenlabs.io/2pu1o9y92jl1";
+  var affiliateBlock = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+    "🎙️ TOOLS I USE TO RUN THIS CHANNEL:\n" +
+    "✅ ElevenLabs AI Voice (the voice you just heard)\n" +
+    "   Try it FREE → https://try.elevenlabs.io/2pu1o9y92jl1\n" +
+    "   (Seriously the best AI voice tool available right now)";
 
   // Add Amazon book recommendations matched to niche
   var amazonBlock = "";
   try {
     var books = getYTAmazonLinks(niche || "", 2);
     if (books.length > 0) {
-      amazonBlock = "\n\n📚 RECOMMENDED READING:\n" + books.map(function(b){ return "▶ " + b.name + " → " + b.url; }).join("\n");
-      amazonBlock += "\n(As an Amazon Associate I earn from qualifying purchases)";
+      amazonBlock = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" +
+        "📚 BOOKS MENTIONED IN THIS VIDEO:\n" +
+        books.map(function(b){ return "✅ " + b.name + "\n   → " + b.url; }).join("\n\n") +
+        "\n\n(Affiliate links — I earn a small commission at no cost to you)";
     }
   } catch(e) {}
 
@@ -1026,7 +1131,7 @@ function generateScript(topic, niche, product_url) {
       "Opening hook line: \"" + (topic.hook || "What I am about to show you changes everything") + "\"\n" +
       (product_url ? "Mention this resource ONCE naturally around the 7-minute mark: " + product_url + "\n" : "") +
       "\nCRITICAL SCRIPT REQUIREMENTS:\n" +
-      "- 1500-1800 words of pure SPOKEN narration\n" +
+      "- 2000-2400 words of pure SPOKEN narration\n" +
       "- First 30 seconds must be a PATTERN INTERRUPT — say something surprising, bold, or counterintuitive\n" +
       "- Use ## only as invisible section markers — viewers never see these\n" +
       "- Write like you are talking to ONE person — use \'you\' constantly\n" +
@@ -1047,10 +1152,16 @@ function generateScript(topic, niche, product_url) {
       "Most valuable insight. This is where viewers decide to subscribe.\n" +
       "End this section with a NATURAL subscribe CTA — something like: If you want more of this, hit subscribe. I drop one of these every single day.\n" +
       (product_url ? "Natural resource mention here.\n" : "") + "\n" +
-      "## POINT 4 + 5 (7:30-9:30)\n" +
-      "Momentum section — faster pace, quick wins, build to the conclusion.\n\n" +
-      "## CLOSE (9:30-10:30)\n" +
-      "Callback to the hook, key takeaway in one sentence, subscribe CTA that feels earned not begged.\n\n" +
+      "## POINT 4 (7:30-8:30)\n" +
+      "Strong actionable section — give them something they can do TODAY. Real specific steps.\n\n" +
+      "## POINT 5 (8:30-10:00)\n" +
+      "The section most videos skip — go deeper on the biggest mistake or the most counterintuitive truth.\n\n" +
+      "## POINT 6 + MOMENTUM (10:00-11:30)\n" +
+      "Faster pace, quick wins, callback to earlier open loops, build to the conclusion.\n\n" +
+      "## CLOSE (11:30-12:40)\n" +
+      "Callback to the hook, key takeaway in one sentence.\n" +
+      "Mention the books or resources in the description — say something like: I linked the books that helped me most in the description below, grab whichever one fits where you are right now.\n" +
+      "End with a subscribe CTA that feels earned not begged — something like: If this was useful, subscribe. New video every single day at 8am.\n\n" +
       "Write the COMPLETE script now. Every word spoken. Nothing summarized."
     }],
   }).then(function(res){ return res.content[0].text; });
