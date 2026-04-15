@@ -374,18 +374,33 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
     }).join("");
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
       '<defs>' +
-        '<filter id="shadow"><feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.9"/></filter>' +
-        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.3"/><stop offset="60%" stop-color="#000" stop-opacity="0.65"/><stop offset="100%" stop-color="#000" stop-opacity="0.85"/></linearGradient>' +
+        '<filter id="shadow"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#000" flood-opacity="0.95"/></filter>' +
+        '<filter id="glow"><feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#' + theme.accent + '" flood-opacity="0.5"/><feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.9"/></filter>' +
+        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="#000" stop-opacity="0.2"/>' +
+          '<stop offset="50%" stop-color="#000" stop-opacity="0.55"/>' +
+          '<stop offset="100%" stop-color="#000" stop-opacity="0.88"/>' +
+        '</linearGradient>' +
+        '<linearGradient id="accentbar" x1="0" y1="0" x2="1" y2="0">' +
+          '<stop offset="0%" stop-color="#' + theme.accent + '"/>' +
+          '<stop offset="100%" stop-color="#' + theme.accent + '" stop-opacity="0.3"/>' +
+        '</linearGradient>' +
       '</defs>' +
       '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
-      '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
-      '<rect y="' + (H-6) + '" width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
-      // Accent line
-      '<rect x="200" y="' + (startY - 30) + '" width="880" height="4" fill="#' + theme.accent + '" opacity="0.7" rx="2"/>' +
+      // Top and bottom accent bars
+      '<rect width="' + W + '" height="6" fill="url(#accentbar)"/>' +
+      '<rect y="' + (H-6) + '" width="' + W + '" height="6" fill="url(#accentbar)"/>' +
+      // Channel tag top left
+      '<rect x="30" y="20" width="220" height="36" fill="#' + theme.accent + '" opacity="0.9" rx="4"/>' +
+      '<text x="140" y="44" font-family="' + fontFamily + '" font-size="18" font-weight="bold" fill="white" text-anchor="middle">SmallBiz AI Hub</text>' +
+      // Accent divider line above title
+      '<rect x="100" y="' + (startY - 40) + '" width="' + (W - 200) + '" height="3" fill="#' + theme.accent + '" opacity="0.8" rx="2"/>' +
       els +
-      // Sub text
-      '<rect x="160" y="' + (H-110) + '" width="960" height="60" fill="#000" opacity="0.5" rx="6"/>' +
-      '<text x="640" y="' + (H-70) + '" font-family="' + fontFamily + '" font-size="26" fill="#' + theme.sub + '" text-anchor="middle">' + safeXml(slide.sub || "Watch this before your competition does", 70) + '</text>' +
+      // Accent divider line below title
+      '<rect x="100" y="' + (startY + (headLines.length * 90) - 10) + '" width="' + (W - 200) + '" height="3" fill="#' + theme.accent + '" opacity="0.5" rx="2"/>' +
+      // Sub text with darker backing
+      '<rect x="120" y="' + (H-120) + '" width="' + (W - 240) + '" height="70" fill="#000" opacity="0.6" rx="8"/>' +
+      '<text x="640" y="' + (H-75) + '" font-family="' + fontFamily + '" font-size="28" fill="#' + theme.sub + '" text-anchor="middle" filter="url(#shadow)">' + safeXml(slide.sub || "Watch this before your competition does", 70) + '</text>' +
       '</svg>';
 
   } else if (slide.type === "cta") {
@@ -410,46 +425,69 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
       '</svg>';
 
   } else {
-    // Section slide — the most common type
-    var headLines = wrapWords(slide.headline, 38);
-    var headEls   = headLines.slice(0,2).map(function(l,i){
-      return '<text x="640" y="' + (195+i*72) + '" font-family="' + fontFamily + '" font-size="54" font-weight="bold" fill="white" text-anchor="middle" filter="url(#shadow)">' + safeXml(l,50) + '</text>';
+    // Section slide — redesigned for maximum visual impact
+    var headLines = wrapWords(slide.headline, 32);
+    var body = slide.body || [];
+
+    // Headline elements — larger, bolder, left-aligned for modern look
+    var headEls = headLines.slice(0,2).map(function(l, i) {
+      var isFirst = i === 0;
+      return '<text x="60" y="' + (160 + i * 75) + '" font-family="' + fontFamily + '" font-size="' + (isFirst ? 62 : 56) + '" font-weight="bold" fill="white" filter="url(#glow)">' + safeXml(l, 45) + '</text>';
     }).join("");
-    var body = slide.body||[];
-    var bodyEls = "", yPos = headLines.length > 1 ? 340 : 300;
-    for (var bi = 0; bi < Math.min(body.length, 4); bi++) {
-      var wrapped = wrapWords(body[bi], 52);
-      for (var wi = 0; wi < Math.min(wrapped.length, 2); wi++) {
-        bodyEls += '<text x="110" y="' + yPos + '" font-family="' + fontFamily + '" font-size="30" fill="#eeeeee" filter="url(#shadow)">' + safeXml(wrapped[wi], 62) + '</text>';
-        yPos += 44;
-      }
-      yPos += 14;
+
+    // Body items as modern cards with accent left border
+    var bodyEls = "";
+    var cardY = headLines.length > 1 ? 310 : 260;
+    for (var bi = 0; bi < Math.min(body.length, 3); bi++) {
+      var cardH = 62;
+      var bodyText = safeXml(body[bi], 58);
+      // Card background
+      bodyEls += '<rect x="60" y="' + cardY + '" width="' + (W - 120) + '" height="' + cardH + '" fill="#000" opacity="0.55" rx="6"/>';
+      // Accent left bar
+      bodyEls += '<rect x="60" y="' + cardY + '" width="5" height="' + cardH + '" fill="#' + theme.accent + '" rx="3"/>';
+      // Number badge
+      bodyEls += '<rect x="72" y="' + (cardY + 14) + '" width="32" height="32" fill="#' + theme.accent + '" opacity="0.9" rx="4"/>';
+      bodyEls += '<text x="88" y="' + (cardY + 35) + '" font-family="' + fontFamily + '" font-size="18" font-weight="bold" fill="white" text-anchor="middle">' + (bi + 1) + '</text>';
+      // Body text
+      bodyEls += '<text x="118" y="' + (cardY + 38) + '" font-family="' + fontFamily + '" font-size="26" fill="white" filter="url(#shadow)">' + bodyText + '</text>';
+      cardY += cardH + 12;
     }
-    // Bullet dots
-    var bulletSvg = "", bY = headLines.length > 1 ? 318 : 278;
-    for (var bj = 0; bj < Math.min(body.length, 4); bj++) {
-      bulletSvg += '<circle cx="80" cy="' + bY + '" r="8" fill="#' + theme.accent + '"/>';
-      bY += 58;
-    }
-    // Progress bar at bottom (slide number feel)
+
+    // Channel watermark bottom right
+    var watermark = '<text x="' + (W - 20) + '" y="' + (H - 15) + '" font-family="' + fontFamily + '" font-size="16" fill="white" text-anchor="end" opacity="0.5">SmallBiz AI Hub</text>';
+
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
       '<defs>' +
-        '<filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#000" flood-opacity="0.95"/></filter>' +
-        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#000" stop-opacity="0.25"/><stop offset="45%" stop-color="#000" stop-opacity="0.6"/><stop offset="100%" stop-color="#000" stop-opacity="0.88"/></linearGradient>' +
-        '<linearGradient id="hgrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#' + theme.accent + '" stop-opacity="0.25"/><stop offset="100%" stop-color="#' + theme.accent + '" stop-opacity="0"/></linearGradient>' +
+        // Lighter overlay so background video shows through more
+        '<filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.9"/></filter>' +
+        '<filter id="glow"><feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#' + theme.accent + '" flood-opacity="0.4"/><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.9"/></filter>' +
+        // Lighter gradient — lets background video breathe
+        '<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="#000" stop-opacity="0.15"/>' +
+          '<stop offset="35%" stop-color="#000" stop-opacity="0.45"/>' +
+          '<stop offset="100%" stop-color="#000" stop-opacity="0.80"/>' +
+        '</linearGradient>' +
+        // Accent sweep top-left
+        '<linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">' +
+          '<stop offset="0%" stop-color="#' + theme.accent + '" stop-opacity="0.35"/>' +
+          '<stop offset="60%" stop-color="#' + theme.accent + '" stop-opacity="0"/>' +
+        '</linearGradient>' +
       '</defs>' +
+      // Main dark overlay — lighter than before
       '<rect width="' + W + '" height="' + H + '" fill="url(#grad)"/>' +
-      // Header band
-      '<rect width="' + W + '" height="240" fill="url(#hgrad)"/>' +
-      '<rect width="' + W + '" height="6" fill="#' + theme.accent + '"/>' +
-      // Headline bg pill
-      '<rect x="40" y="130" width="' + (W-80) + '" height="' + (headLines.length > 1 ? 145 : 80) + '" fill="#000" opacity="0.45" rx="8"/>' +
-      '<rect x="40" y="130" width="6" height="' + (headLines.length > 1 ? 145 : 80) + '" fill="#' + theme.accent + '" rx="3"/>' +
+      // Accent sweep top band
+      '<rect width="' + W + '" height="200" fill="url(#sweep)"/>' +
+      // Top accent line — thicker and more visible
+      '<rect width="' + W + '" height="5" fill="#' + theme.accent + '"/>' +
+      // Left side accent bar
+      '<rect width="5" height="' + H + '" fill="#' + theme.accent + '" opacity="0.6"/>' +
+      // Headline area with subtle backing
+      '<rect x="50" y="90" width="' + (W - 100) + '" height="' + (headLines.length > 1 ? 165 : 95) + '" fill="#000" opacity="0.35" rx="10"/>' +
       headEls +
-      bulletSvg + bodyEls +
-      // Bottom bar
-      '<rect y="' + (H-50) + '" width="' + W + '" height="50" fill="#000" opacity="0.6"/>' +
-      '<text x="640" y="' + (H-18) + '" font-family="' + fontFamily + '" font-size="18" fill="#' + theme.sub + '" text-anchor="middle" opacity="0.8">Subscribe for daily tips</text>' +
+      bodyEls +
+      watermark +
+      // Bottom accent strip
+      '<rect y="' + (H - 4) + '" width="' + W + '" height="4" fill="#' + theme.accent + '" opacity="0.8"/>' +
       '</svg>';
   }
 
@@ -493,11 +531,13 @@ function scriptToSlides(title, scriptText) {
   flush();
 
   var fillers = [
-    { headline: "Key Takeaway",   body: ["The top 1% know this — now you do too", "Apply this before your competition does"] },
-    { headline: "Pro Tip",        body: ["This one change saved me 5 hours a week", "Most people skip this — do not be most people"] },
-    { headline: "Common Mistake", body: ["97% of beginners get this wrong", "Here is exactly what to do instead"] },
-    { headline: "Quick Win",      body: ["You can implement this in under 10 minutes", "The results will show up within a week"] },
-    { headline: "Reality Check",  body: ["Here is what nobody tells you upfront", "The honest truth about what actually works"] },
+    { headline: "The Bottom Line",    body: ["Most people stop before they see results", "The ones who win just stayed consistent longer"] },
+    { headline: "What Most Miss",     body: ["Everyone focuses on the wrong metric", "Shift your focus here and everything changes"] },
+    { headline: "Action Step",        body: ["Do this one thing today — not tomorrow", "Five minutes now saves five hours later"] },
+    { headline: "The Real Numbers",   body: ["Stop guessing and start tracking", "Data beats opinions every single time"] },
+    { headline: "Insider Move",       body: ["This is what the top earners do differently", "It looks simple but most people overcomplicate it"] },
+    { headline: "Watch Out For This", body: ["This mistake costs people thousands every year", "Now you know what to avoid"] },
+    { headline: "Your Next Step",     body: ["Take one action before you close this video", "Small moves compound into massive results"] },
   ];
   var fi = 0;
   while (slides.length < 38) { slides.push({ type: "section", headline: fillers[fi % fillers.length].headline, body: fillers[fi % fillers.length].body }); fi++; }
