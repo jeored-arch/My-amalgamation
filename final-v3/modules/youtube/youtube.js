@@ -397,7 +397,7 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
       '<rect x="100" y="' + (startY - 40) + '" width="' + (W - 200) + '" height="3" fill="#' + theme.accent + '" opacity="0.8" rx="2"/>' +
       els +
       // Accent divider line below title
-      '<rect x="100" y="' + (startY + (headLines.length * 90) - 10) + '" width="' + (W - 200) + '" height="3" fill="#' + theme.accent + '" opacity="0.5" rx="2"/>' +
+      '<rect x="100" y="' + (startY + (lines.length * 90) - 10) + '" width="' + (W - 200) + '" height="3" fill="#' + theme.accent + '" opacity="0.5" rx="2"/>' +
       // Sub text with darker backing
       '<rect x="120" y="' + (H-120) + '" width="' + (W - 240) + '" height="70" fill="#000" opacity="0.6" rx="8"/>' +
       '<text x="640" y="' + (H-75) + '" font-family="' + fontFamily + '" font-size="28" fill="#' + theme.sub + '" text-anchor="middle" filter="url(#shadow)">' + safeXml(slide.sub || "Watch this before your competition does", 70) + '</text>' +
@@ -426,8 +426,9 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
 
   } else {
     // Section slide — redesigned for maximum visual impact
-    var headLines = wrapWords(slide.headline, 32);
+    var headLines = wrapWords(slide.headline || "", 32);
     var body = slide.body || [];
+    if (!headLines || headLines.length === 0) headLines = ["..."];
 
     // Headline elements — larger, bolder, left-aligned for modern look
     var headEls = headLines.slice(0,2).map(function(l, i) {
