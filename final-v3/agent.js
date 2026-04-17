@@ -250,6 +250,40 @@ async function main() {
 
   // ── PINTEREST — removed (app not approved)
 
+  // ── CONTENT ────────────────────────────────────────────────────────────────
+  console.log(c("cyan","\n  ✉️  Content & outreach..."));
+  try {
+    ["output/content","output/outreach","output/reports"].forEach(d =>
+      fs.mkdirSync(path.join(process.cwd(),d),{recursive:true})
+    );
+    const stratBrief = brain.getStrategyBrief(currentNiche);
+    // Pick a random post format so every post feels different
+    const postFormats = [
+      `Write a 700-800 word blog post about "${currentNiche}" from the perspective of someone who learned something the hard way. Start with a personal story or real situation, then share 4-5 specific lessons learned. Use a conversational tone like you are talking to a friend. Do not use a generic intro like "In today's world" or "Are you looking for". Jump straight into the story. End with one clear actionable step the reader can take today. Include a natural mention of a helpful digital guide around the middle of the post.`,
+      `Write a 700-800 word blog post titled something like "What Nobody Tells You About ${currentNiche}". Cover 5 specific things that most beginners get wrong or don't know about. Each point should be 2-3 sentences minimum with real detail — not vague advice. Write in first person like you discovered this yourself. Avoid bullet point lists — write in flowing paragraphs. Do not start with a generic intro. Start with the most surprising or counterintuitive point immediately.`,
+      `Write a 700-800 word blog post about a specific common mistake people make with ${currentNiche}. Open with why this mistake is so costly — use a specific dollar amount or real consequence. Then explain exactly what to do instead with step by step detail. Include at least one specific example or scenario. Write like a knowledgeable friend explaining something over coffee — casual, direct, and genuinely useful. Mention a helpful resource naturally near the end.`,
+      `Write a 700-800 word blog post structured as a real beginner's guide to one specific aspect of ${currentNiche}. Pick one narrow focused topic rather than trying to cover everything. Explain it thoroughly with context, examples, and practical steps. Write for someone who knows nothing about this topic. Use short paragraphs and plain language. Avoid jargon unless you explain it. Do not use a template structure — let the content flow naturally based on what actually needs to be explained.`,
+      `Write a 700-800 word blog post answering the question a beginner would most likely Google about ${currentNiche}. Start your post with that question as the hook. Then answer it thoroughly and honestly — including the parts most articles skip over. Share what actually works versus what sounds good in theory. Use specific numbers, timeframes, and real examples throughout. End with what the reader should do in the next 24 hours based on what they just learned.`,
+    ];
+    const selectedFormat = postFormats[Math.floor(Math.random() * postFormats.length)];
+    const blogRes = await client.messages.create({
+      model:config.anthropic.model, max_tokens:2000,
+      messages:[{role:"user",content:selectedFormat}]
+    });
+    fs.writeFileSync(path.join(process.cwd(),"output/content",`post-day-${state.day+1}.md`),
+      `# Day ${state.day+1} — ${currentNiche}\n\n${blogRes.content[0].text}`);
+    state.content_total++;
+
+    const emailRes = await client.messages.create({
+      model:config.anthropic.model, max_tokens:1200,
+      messages:[{role:"user",content:`Write 20 cold email templates for "${currentNiche}" targeting small business owners. Each: subject + under 80 words body. Casual, human, not spammy. Mention our digital guide naturally.`}]
+    });
+    fs.writeFileSync(path.join(process.cwd(),"output/outreach",`emails-day-${state.day+1}.txt`),
+      emailRes.content[0].text);
+    state.emails_total += 20;
+    ok("Blog post + 20 emails done");
+  } catch(e) { wrn(`Content: ${e.message}`); }
+
   // ── BLOGGER ────────────────────────────────────────────────────────────────
   try {
     const blogFile = path.join(process.cwd(), "output/content", `post-day-${state.day+1}.md`);
@@ -295,40 +329,6 @@ async function main() {
     heal.logError(e.message, "product_engine");
     wrn(`Product engine: ${e.message}`);
   }
-
-  // ── CONTENT ────────────────────────────────────────────────────────────────
-  console.log(c("cyan","\n  ✉️  Content & outreach..."));
-  try {
-    ["output/content","output/outreach","output/reports"].forEach(d =>
-      fs.mkdirSync(path.join(process.cwd(),d),{recursive:true})
-    );
-    const stratBrief = brain.getStrategyBrief(currentNiche);
-    // Pick a random post format so every post feels different
-    const postFormats = [
-      `Write a 700-800 word blog post about "${currentNiche}" from the perspective of someone who learned something the hard way. Start with a personal story or real situation, then share 4-5 specific lessons learned. Use a conversational tone like you are talking to a friend. Do not use a generic intro like "In today's world" or "Are you looking for". Jump straight into the story. End with one clear actionable step the reader can take today. Include a natural mention of a helpful digital guide around the middle of the post.`,
-      `Write a 700-800 word blog post titled something like "What Nobody Tells You About ${currentNiche}". Cover 5 specific things that most beginners get wrong or don't know about. Each point should be 2-3 sentences minimum with real detail — not vague advice. Write in first person like you discovered this yourself. Avoid bullet point lists — write in flowing paragraphs. Do not start with a generic intro. Start with the most surprising or counterintuitive point immediately.`,
-      `Write a 700-800 word blog post about a specific common mistake people make with ${currentNiche}. Open with why this mistake is so costly — use a specific dollar amount or real consequence. Then explain exactly what to do instead with step by step detail. Include at least one specific example or scenario. Write like a knowledgeable friend explaining something over coffee — casual, direct, and genuinely useful. Mention a helpful resource naturally near the end.`,
-      `Write a 700-800 word blog post structured as a real beginner's guide to one specific aspect of ${currentNiche}. Pick one narrow focused topic rather than trying to cover everything. Explain it thoroughly with context, examples, and practical steps. Write for someone who knows nothing about this topic. Use short paragraphs and plain language. Avoid jargon unless you explain it. Do not use a template structure — let the content flow naturally based on what actually needs to be explained.`,
-      `Write a 700-800 word blog post answering the question a beginner would most likely Google about ${currentNiche}. Start your post with that question as the hook. Then answer it thoroughly and honestly — including the parts most articles skip over. Share what actually works versus what sounds good in theory. Use specific numbers, timeframes, and real examples throughout. End with what the reader should do in the next 24 hours based on what they just learned.`,
-    ];
-    const selectedFormat = postFormats[Math.floor(Math.random() * postFormats.length)];
-    const blogRes = await client.messages.create({
-      model:config.anthropic.model, max_tokens:2000,
-      messages:[{role:"user",content:selectedFormat}]
-    });
-    fs.writeFileSync(path.join(process.cwd(),"output/content",`post-day-${state.day+1}.md`),
-      `# Day ${state.day+1} — ${currentNiche}\n\n${blogRes.content[0].text}`);
-    state.content_total++;
-
-    const emailRes = await client.messages.create({
-      model:config.anthropic.model, max_tokens:1200,
-      messages:[{role:"user",content:`Write 20 cold email templates for "${currentNiche}" targeting small business owners. Each: subject + under 80 words body. Casual, human, not spammy. Mention our digital guide naturally.`}]
-    });
-    fs.writeFileSync(path.join(process.cwd(),"output/outreach",`emails-day-${state.day+1}.txt`),
-      emailRes.content[0].text);
-    state.emails_total += 20;
-    ok("Blog post + 20 emails done");
-  } catch(e) { wrn(`Content: ${e.message}`); }
 
   // ── WRAP UP ────────────────────────────────────────────────────────────────
   state.day++;
