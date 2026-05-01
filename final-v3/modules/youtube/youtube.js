@@ -138,7 +138,7 @@ function makeThumbnail(title, theme, outputPath) {
   var stopRx = /^(the|and|for|with|that|this|are|was|you|your|how|why|what|when|from|have|will|they|about|these|those|into|also|than|then|more|most|just|been|some|over|such|after|before|every|each|both|while|its|not|but|can|all|get|do|of|in|on|to|a|an|i|so|my)$/i;
 
   // Prioritize power words for the thumbnail — these drive clicks
-  var POWER = ["STOP","NEVER","SECRET","WARNING","TRUTH","HACK","MISTAKE","MISTAKES","FREE","EXPOSED","FINALLY","QUIT","BROKE","RICH","FIRED","DONE","REAL","FAKE","LIES","DEAD"];
+  var POWER = ["STOP","NEVER","SECRET","WARNING","TRUTH","HACK","MISTAKE","MISTAKES","FREE","EXPOSED","FINALLY","QUIT","BROKE","RICH","FIRED","DONE","REAL","FAKE","LIES","DEAD","BANNED","SCAM","STOLEN","HIDDEN","ILLEGAL","AUDITED","CHEATING","LOOPHOLE","URGENT","LEAKED","BLOCKED","TRAP","RUINED","FLAGGED","CRUSHED","DELETED","SHOCKING","REVEALED","UNCOVERED","BUSTED"];
   var allWords = title.replace(/[^a-zA-Z0-9 ]/g," ").trim().split(/\s+/);
 
   // Pick the best 4-6 words: power words first, then meaningful non-stop words
@@ -1108,28 +1108,56 @@ function researchTopics(niche, usedTopics) {
     model: config.anthropic.model, max_tokens: 1500,
     messages: [{ role: "user", content:
       "You are a top YouTube strategist for a small business / finance / AI tools channel with a proven audience.\n\n" +
+      "You are the #1 YouTube strategist for small business owners, AI tools, and personal finance.\n" +
+      "Your ONLY job is generating titles that make someone stop scrolling and click IMMEDIATELY.\n\n" +
       "Generate 8 HIGH-PERFORMING video topics for niche: \"" + activeNiche + "\"\n\n" +
       (brainContext ? brainContext + "\n" : "") +
       "ALREADY USED — DO NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
-      "PROVEN WINNING FORMULAS — ranked by REAL channel data:\n" +
-      "🥇 BEST (16.7% CTR proven): [Number] SECRET [Topic] [Authority] EXPOSED\n" +
-      "🥇 BEST (16.7% CTR proven): [Number] [Topic] Secrets [Villain] Hopes You Never Find Out\n" +
-      "🥈 STRONG: WARNING: [Number] [Tool/Strategy] [Negative Consequence] (EXPOSED)\n" +
-      "🥈 STRONG: EXPOSED: The Hidden [Cost/Truth/Secret] Behind [Popular Thing]\n" +
-      "🥉 GOOD: [Number] [Niche] MISTAKES That Cost Small Business Owners $[Amount]\n" +
-      "🥉 GOOD: IRS [Action] These [Number] [Topic] — Don\'t Get [Consequence]\n" +
-      "4. Stop [Common Advice] — Here\'s What Actually Works in [Year]\n" +
-      "5. How I [Achieved Result] Without [Common Barrier]\n\n" +
-      "CRITICAL RULES based on real performance data:\n" +
-      "- At least 4 of your 8 topics MUST use EXPOSED or SECRET — these get 3x more clicks\n" +
-      "- IRS and tax topics get the highest watch time — include at least 1 per batch\n" +
-      "- Use CAPS on power words: EXPOSED, SECRET, WARNING, NEVER, STOP\n" +
-      "- Include specific dollar amounts — $847, $4,200, $1,000s — vague titles get ignored\n" +
-      "- Write for small business owners aged 25-50 who are worried about money and audits\n" +
-      "- Titles 55-75 chars — punchy, front-load the power word\n" +
-      "- Hooks must make them feel like they\'re about to miss something critical\n\n" +
-      "Return ONLY a JSON array:\n" +
-      "[{\"title\":\"WARNING: 5 AI Tools Quietly Draining Your Business Budget\",\"hook\":\"I found $847/month in hidden charges across tools my clients were already paying for\",\"angle\":\"warning\",\"niche\":\"" + activeNiche + "\"}]"
+      "━━━ PROVEN TITLE FORMULAS (ranked by actual CTR data) ━━━\n\n" +
+      "🥇 #1 FORMULA — 16.7% CTR proven on this channel:\n" +
+      "   [Number] SECRET [Topic] [Villain: Big Corp/IRS/Bank] EXPOSED\n" +
+      "   Examples: \'5 SECRET AI Tools Big Corporations Hide From Small Business Owners EXPOSED\'\n" +
+      "            \'7 SECRET IRS Loopholes Accountants Hope You Never Find Out\' \n\n" +
+      "🥇 #1 FORMULA VARIANT — same CTR tier:\n" +
+      "   WARNING: [Platform/Agency/IRS] Is [Secretly Doing Bad Thing] To [Victim]\n" +
+      "   Examples: \'WARNING: IRS Is Flagging These 3 Gig Worker Deductions in 2025\'\n" +
+      "            \'WARNING: QuickBooks Is Silently Charging Small Businesses Extra Fees\'\n\n" +
+      "🥈 #2 FORMULA — 12-14% CTR:\n" +
+      "   EXPOSED: The Hidden [Cost/Truth/Scam/Trap] Behind [Popular Tool/Strategy]\n" +
+      "   Examples: \'EXPOSED: The Hidden Monthly Fees Behind \"Free\" Business Banking\'\n" +
+      "            \'EXPOSED: Why Your Shopify Store Will Never Profit (The Real Math)\'\n\n" +
+      "🥈 #2 FORMULA VARIANT:\n" +
+      "   I Tried [Tool/Strategy] For [Timeframe] — [Shocking Honest Result]\n" +
+      "   Examples: \'I Tried Every AI Tool For 90 Days — Only 3 Are Worth Paying For\'\n" +
+      "            \'I Replaced My $3,200/Month Accountant With AI — Here\'s What Happened\'\n\n" +
+      "🥉 #3 FORMULA — 9-11% CTR:\n" +
+      "   Stop [Common Thing Everyone Does] — The IRS/Banks/Platforms Are [Consequence]\n" +
+      "   Examples: \'STOP Paying For These 5 Business Tools — Free AI Does It Better\'\n" +
+      "            \'Stop Filing Taxes Like This — The IRS Is Quietly Flagging These Returns\'\n\n" +
+      "🥉 #3 FORMULA VARIANT:\n" +
+      "   The [Dollar Amount] [Topic] Mistake Small Business Owners Make Every Year\n" +
+      "   Examples: \'The $4,200 Bookkeeping Mistake 9 Out of 10 Small Businesses Make\'\n" +
+      "            \'The $0 AI System Replacing $500/Month Software For Small Businesses\'\n\n" +
+      "━━━ NON-NEGOTIABLE TITLE RULES ━━━\n" +
+      "1. AT LEAST 5 of your 8 titles MUST start with or contain: EXPOSED, SECRET, WARNING, STOP, or NEVER\n" +
+      "2. Every title needs a VILLAIN (IRS, Big Corp, Banks, Landlords, Platforms, \"They\") or FEAR (audit, debt, fail, flagged, banned)\n" +
+      "3. Include a SPECIFIC DOLLAR AMOUNT in at least 4 titles — $847, $4,200, $0, $500/month\n" +
+      "4. Include \"2025\" or \"2026\" in at least 2 titles — algorithm favors recency signals\n" +
+      "5. IRS / tax / audit topic: MANDATORY — include exactly 1 per batch. These get 40% higher watch time\n" +
+      "6. Title length: 55-80 characters — punchy, front-load the power word\n" +
+      "7. Hook must create URGENCY or FEAR OF MISSING OUT — they should feel stupid for not clicking\n" +
+      "8. Write for small business owners aged 25-50 who fear audits, losing money, and being left behind by AI\n" +
+      "9. NEVER use: \'How to\', \'Tips for\', \'Guide to\', \'Introduction to\' — these are low-CTR filler phrases\n" +
+      "10. At least 1 title must reference a SPECIFIC TOOL (QuickBooks, ChatGPT, Shopify, PayPal, Stripe, etc.)\n\n" +
+      "━━━ HOOK RULES ━━━\n" +
+      "The hook (first line of the video) must:\n" +
+      "- Start MID-STORY or with a shocking specific fact, never a greeting\n" +
+      "- Include a real dollar amount or real timeframe\n" +
+      "- Make them feel like they are ALREADY losing money\n" +
+      "- Example good hook: \'Last Tuesday a client sent me a screenshot — QuickBooks had been charging her $127/month for a feature she never activated.\'\n" +
+      "- Example bad hook: \'Today we\'re going to talk about business tools.\'\n\n" +
+      "Return ONLY a valid JSON array, no markdown, no explanation:\n" +
+      "[{\"title\":\"WARNING: IRS Is Flagging These 5 AI Deductions in 2025 — Don\'t Get Audited\",\"hook\":\"My client got an IRS notice last month. The reason? She wrote off $3,400 in AI tools the wrong way. Here is exactly what not to do.\",\"angle\":\"warning\",\"niche\":\"" + activeNiche + "\"}]"
     }],
   }).then(function(res) {
     var text = res.content[0].text.trim().replace(/```json/g,"").replace(/```/g,"").trim();
@@ -1139,16 +1167,21 @@ function researchTopics(niche, usedTopics) {
   }).catch(function() {
     var day = new Date().getDate() + (usedTopics||[]).length;
     var fallbacks = [
-      { title: "I Tried Every AI Tool for 30 Days — Honest Results", hook: "Most tools are overhyped. Here are the 5 that actually changed my business", angle: "case-study" },
-      { title: "The Credit Score Mistake That Cost Me 2 Years", hook: "One decision set my credit back 24 months — here is what not to do", angle: "story" },
-      { title: "7 Passive Income Streams Ranked From Easiest to Hardest", hook: "I have tried all 7. Only 3 actually scale without burning you out", angle: "list" },
-      { title: "Nobody Talks About This AI Productivity Strategy", hook: "Top 1% of entrepreneurs use this daily. Everyone else is still doing it manually", angle: "secrets" },
-      { title: "Stop Taking This Money Advice — Do This Instead", hook: "The most popular personal finance tip is actually holding most people back", angle: "truth-bomb" },
-      { title: "How I Built a $29 Digital Product in One Afternoon", hook: "No audience, no ads, no experience — just a simple system anyone can copy", angle: "how-to" },
-      { title: "5 Signs Your Business Will Fail in 12 Months", hook: "I have seen hundreds of businesses. These warning signs show up every time", angle: "warning" },
-      { title: "The Beginner Investing Mistakes I Made So You Don\'t Have To", hook: "I lost $4,000 in my first year investing. Here is exactly what went wrong", angle: "mistakes" },
-      { title: "3 AI Automations That Run My Business While I Sleep", hook: "Set these up once and they work 24 hours a day — no monthly fees", angle: "tools" },
-      { title: "What 1 Year of Daily YouTube Did to My Income", hook: "The honest numbers — what worked, what failed, and what I would do differently", angle: "case-study" },
+      { title: "WARNING: IRS Is Flagging These 5 AI Tool Deductions in 2025", hook: "My client got an IRS notice last month. She wrote off $3,400 in AI tools the wrong way. Here is exactly what not to do.", angle: "warning" },
+      { title: "EXPOSED: The $847/Month Hidden Fees Inside \"Free\" Business Tools", hook: "I audited 12 small business tool stacks last quarter. Every single one had charges the owner had completely forgotten about.", angle: "exposed" },
+      { title: "5 SECRET AI Tools Big Corporations Hide From Small Business Owners", hook: "These tools cost enterprises $50,000 a year. You can access the same capabilities for under $30 a month. Here is how.", angle: "secrets" },
+      { title: "STOP Paying Your Accountant $500/Month — AI Does This For $0", hook: "I replaced a $6,000 per year bookkeeping bill with three AI tools that now run automatically every single day.", angle: "stop" },
+      { title: "WARNING: QuickBooks Is Making These Silent Changes to Your Bill in 2025", hook: "Three of my clients opened their statements last week and found charges they had never agreed to. Here is what to look for.", angle: "warning" },
+      { title: "EXPOSED: Why 94% of Small Businesses Fail Their First IRS Audit", hook: "I have seen the inside of enough IRS audit letters to know exactly what triggers them. Number three on this list surprises everyone.", angle: "exposed" },
+      { title: "I Replaced My $3,200/Month Marketing Agency With AI — Real Numbers", hook: "Month one after firing the agency: $0 spent, 40% more leads. Month six: I can not believe I waited this long.", angle: "case-study" },
+      { title: "NEVER Start a Business Until You Know These 7 IRS Rules", hook: "The IRS has seven specific triggers for small business audits. Most new business owners violate at least three of them in year one.", angle: "warning" },
+      { title: "SECRET: How I Built a $500/Day Business With $0 Startup Cost Using AI", hook: "No office, no employees, no inventory. Just three AI tools running 24 hours a day generating income while I sleep.", angle: "secrets" },
+      { title: "STOP Filing Taxes Like This — The IRS Is Quietly Flagging These Returns", hook: "A tax attorney told me something last week that most small business owners will never hear from their accountants.", angle: "warning" },
+      { title: "The $4,200 Business Mistake 9 Out of 10 Small Business Owners Make", hook: "It is not a flashy mistake. It is the boring one that silently drains thousands from your business every single year.", angle: "mistakes" },
+      { title: "7 FREE AI Tools Replacing $2,000/Month Software For Small Businesses", hook: "I built a complete business tech stack for $0 per month. Every single tool on this list has a free tier that actually works.", angle: "tools" },
+      { title: "EXPOSED: Shopify Is Taking More Money Than You Think — Check Your Statement", hook: "Most Shopify store owners focus on transaction fees. They completely miss the three other ways Shopify is quietly taking money.", angle: "exposed" },
+      { title: "WARNING: Your Business Bank Account Is Not FDIC Insured — Here Is Why", hook: "If you use a fintech business account, your money may not be protected the way you think it is. This is not hypothetical.", angle: "warning" },
+      { title: "NEVER Use PayPal For Business Until You Understand This Policy", hook: "PayPal froze $92,000 of a small business owner I know last year. Completely legal. Here is the specific clause they used.", angle: "warning" },
     ];
     return [fallbacks[day % fallbacks.length]];
   });
@@ -1157,14 +1190,18 @@ function researchTopics(niche, usedTopics) {
 function generateScript(topic, niche, product_url) {
   return client.messages.create({
     model: config.anthropic.model, max_tokens: 4096,
-    system: "You are a top-tier YouTube scriptwriter for a small business / AI tools / finance channel. Your scripts have driven millions of views because:\n" +
-      "1. Your FIRST SENTENCE is always a bold, counterintuitive, or alarming statement — never a greeting\n" +
-      "2. You write like a trusted friend who just discovered something shocking, not a lecturer\n" +
-      "3. Every 90 seconds you plant a curiosity gap — tease what is coming so they cannot stop watching\n" +
-      "4. You use SPECIFIC details — real dollar amounts, real timeframes, real tool names\n" +
-      "5. Your pacing is conversational — short punchy sentences mixed with longer explanations\n" +
-      "6. You never say Hey guys, Welcome back, Do not forget to like, or any filler phrases\n" +
-      "NEVER use bullet points in spoken narration. NEVER sound like an AI wrote this.",
+    system: "You are the highest-paid YouTube scriptwriter in the small business and AI finance space. Every script you write gets watched because:\n" +
+      "1. Your FIRST SENTENCE drops the viewer into a real story or shocking specific fact — never a greeting, never a setup\n" +
+      "2. You write exactly like a trusted friend who just discovered something that could save or cost the viewer thousands of dollars\n" +
+      "3. Every 90 seconds you plant a CURIOSITY GAP — tease something coming up that they absolutely cannot miss\n" +
+      "4. You use SPECIFIC REAL details — exact dollar amounts ($847, $4,200), real tool names, real timeframes\n" +
+      "5. Your pacing creates URGENCY — short punchy sentences for shocking facts, longer flowing sentences for explanations\n" +
+      "6. You NEVER say: Hey guys, Welcome back, Do not forget to like, Smash that subscribe button, Today we are going to, Let me know in the comments\n" +
+      "7. Every section makes the viewer feel like they are ALREADY losing money or missing out if they stop watching\n" +
+      "8. Your CTAs feel EARNED not begged — they happen naturally after you just gave the viewer real value\n" +
+      "9. You reference a VILLAIN in every video (IRS, Big Corp, Banks, Platforms, Bad Advisors) — someone the viewer can be angry at\n" +
+      "10. Your endings leave viewers feeling smart for watching, not relieved it is over\n" +
+      "NEVER use bullet points in spoken narration. NEVER sound like AI wrote this. NEVER be vague when a specific number works.",
     messages: [{ role: "user", content:
       "Write a complete 10-12 minute YouTube script for: \"" + topic.title + "\"\n" +
       "Niche: " + niche + "\n" +
@@ -1218,9 +1255,12 @@ function generateMetadata(topic, niche) {
       "Angle: " + (topic.angle || "educational") + "\n\n" +
       "TITLE RULES:\n" +
       "- 60-80 characters (YouTube shows ~60 in search)\n" +
-      "- Front-load the most important keyword\n" +
-      "- Keep the emotional hook from the original title\n" +
-      "- Never truncate mid-word\n\n" +
+      "- Front-load the POWER WORD: WARNING, EXPOSED, SECRET, STOP, NEVER — this determines click rate\n" +
+      "- Keep the emotional hook AND the villain or fear element from the original title\n" +
+      "- Include a specific dollar amount if the topic allows it\n" +
+      "- Include 2025 or 2026 if the topic is evergreen — recency signals boost algorithm ranking\n" +
+      "- Never truncate mid-word\n" +
+      "- NEVER start with: How to, Tips for, Guide to, Introduction to, Ways to — these kill CTR\n\n" +
       "DESCRIPTION RULES:\n" +
       "- First 2 lines (157 chars) are what shows in search — make them count\n" +
       "- Line 1: bold hook that matches the thumbnail promise\n" +
