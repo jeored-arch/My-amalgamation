@@ -52,36 +52,88 @@ function findFfmpeg() {
 // ── TOPIC TRACKING ────────────────────────────────────────────────────────────
 
 function getUsedTopics() {
-  var logFile = path.join(DATA_DIR, "videos.json");
-  // Also check a persistent seed file that survives Railway restarts
-  var seedFile = path.join(process.cwd(), "data", "topic-seed.json");
   var used = [];
-  if (fs.existsSync(logFile)) {
-    try { used = JSON.parse(fs.readFileSync(logFile, "utf8")).map(function(v) { return (v.title || "").toLowerCase(); }); } catch(e) {}
+
+  // ── PRIMARY: Read from Railway env var (survives restarts & deploys) ──
+  // In Railway dashboard: add USED_TOPICS env var, leave blank initially.
+  // The system updates it automatically after each video.
+  var envTopics = process.env.USED_TOPICS || "";
+  if (envTopics.trim()) {
+    try {
+      var parsed = JSON.parse(envTopics);
+      if (Array.isArray(parsed)) used = parsed;
+    } catch(e) {
+      // Fallback: comma-separated string
+      used = envTopics.split("|||").map(function(t){ return t.trim(); }).filter(Boolean);
+    }
   }
+
+  // ── SECONDARY: Local videos.json (works when filesystem persists) ──
+  var logFile = path.join(DATA_DIR, "videos.json");
+  if (fs.existsSync(logFile)) {
+    try {
+      var local = JSON.parse(fs.readFileSync(logFile, "utf8")).map(function(v){ return (v.title||"").toLowerCase(); });
+      local.forEach(function(t){ if (!used.includes(t)) used.push(t); });
+    } catch(e) {}
+  }
+
+  // ── TERTIARY: topic-seed.json ──
+  var seedFile = path.join(process.cwd(), "data", "topic-seed.json");
   if (fs.existsSync(seedFile)) {
     try {
       var seed = JSON.parse(fs.readFileSync(seedFile, "utf8"));
-      used = used.concat(seed.used_titles || []);
+      (seed.used_titles||[]).forEach(function(t){ if (!used.includes(t)) used.push(t); });
     } catch(e) {}
   }
+
   return used;
 }
 
 function persistTopicSeed(title) {
+  var lower = title.toLowerCase();
+
+  // ── 1. Update local topic-seed.json ──
   var seedFile = path.join(process.cwd(), "data", "topic-seed.json");
   var data = { used_titles: [] };
   if (fs.existsSync(seedFile)) {
     try { data = JSON.parse(fs.readFileSync(seedFile, "utf8")); } catch(e) {}
   }
   if (!data.used_titles) data.used_titles = [];
-  var lower = title.toLowerCase();
   if (!data.used_titles.includes(lower)) {
     data.used_titles.push(lower);
-    // Keep last 100 to avoid file bloat
     if (data.used_titles.length > 100) data.used_titles = data.used_titles.slice(-100);
-    fs.mkdirSync(path.join(process.cwd(), "data"), { recursive: true });
-    fs.writeFileSync(seedFile, JSON.stringify(data, null, 2));
+    try { fs.mkdirSync(path.join(process.cwd(), "data"), { recursive: true }); fs.writeFileSync(seedFile, JSON.stringify(data, null, 2)); } catch(e) {}
+  }
+
+  // ── 2. Update Railway env var via API so it survives restarts ──
+  // Requires: RAILWAY_API_TOKEN and RAILWAY_SERVICE_ID in your Railway env vars
+  // Get token: railway.app → Account Settings → Tokens
+  // Get service ID: railway.app → your project → Settings → copy Service ID
+  var railwayToken = process.env.RAILWAY_API_TOKEN;
+  var serviceId    = process.env.RAILWAY_SERVICE_ID;
+  if (railwayToken && serviceId) {
+    var allUsed = getUsedTopics();
+    if (!allUsed.includes(lower)) allUsed.push(lower);
+    if (allUsed.length > 60) allUsed = allUsed.slice(-60);
+    var newVal = JSON.stringify(allUsed);
+    var mutation = JSON.stringify({
+      query: "mutation { variableUpsert(input: { serviceId: \"" + serviceId + "\", name: \"USED_TOPICS\", value: " + JSON.stringify(newVal) + " }) }"
+    });
+    try {
+      var https2 = require("https");
+      var req = https2.request({
+        hostname: "backboard.railway.app",
+        path: "/graphql/v2",
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + railwayToken, "Content-Length": Buffer.byteLength(mutation) }
+      }, function(res){ res.resume(); });
+      req.on("error", function(){});
+      req.write(mutation);
+      req.end();
+      console.log("     → USED_TOPICS env var updated (" + allUsed.length + " topics saved to Railway)");
+    } catch(e) { console.log("     → Could not update Railway env var: " + e.message.slice(0,80)); }
+  } else {
+    console.log("     → RAILWAY_API_TOKEN or RAILWAY_SERVICE_ID not set — topic memory only saved locally");
   }
 }
 
@@ -1063,25 +1115,46 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
 
 // Rotating niche expansions — keeps content fresh across related topics
 var NICHE_ANGLES = [
-  "personal finance tips",
-  "passive income strategies",
-  "AI productivity tools",
-  "small business automation",
-  "side hustle ideas",
-  "investing for beginners",
-  "credit score improvement",
-  "digital product business",
-  "freelancing and consulting",
-  "online business systems",
+  "IRS tax deductions for small business owners",
+  "AI tools replacing expensive software in 2025",
+  "passive income strategies for entrepreneurs",
+  "small business bookkeeping automation",
+  "credit score hacks for business owners",
+  "side hustle income secrets exposed",
+  "investing for small business owners",
+  "digital product business without audience",
+  "freelancing rate negotiation tactics",
+  "hidden business banking fees exposed",
+  "QuickBooks alternatives that cost nothing",
+  "gig economy tax strategies 2025",
+  "AI replacing accountants and bookkeepers",
+  "small business audit survival guide",
+  "payroll mistakes that trigger IRS flags",
+  "Shopify and ecommerce hidden costs exposed",
+  "business credit building from zero",
+  "LLC vs sole proprietor tax secrets",
+  "cash flow management for solo entrepreneurs",
+  "ChatGPT automations saving businesses $1000s",
+  "freelance contract red flags exposed",
+  "PayPal and Stripe hidden fee breakdown",
+  "small business insurance mistakes",
+  "social media marketing without paid ads",
+  "email list building for small business",
+  "business deductions most owners miss",
+  "real estate investing for small business owners",
+  "retirement accounts for self employed people",
+  "pricing strategy secrets for service businesses",
+  "business loan secrets banks hide from you",
 ];
 
 function getRotatingNiche(baseNiche, usedCount) {
-  // Every 3 videos, rotate to a related angle for variety
-  if (usedCount > 0 && usedCount % 3 === 0) {
-    var idx = Math.floor(usedCount / 3) % NICHE_ANGLES.length;
-    return NICHE_ANGLES[idx];
-  }
-  return baseNiche;
+  // Rotate niche every single video to guarantee different topics every day
+  // Uses day of year + usedCount so even if usedCount resets, day-of-year keeps rotation going
+  var dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+  var idx = (dayOfYear + usedCount) % NICHE_ANGLES.length;
+  var rotated = NICHE_ANGLES[idx];
+  console.log("     → Niche rotation: \"" + rotated + "\" (day " + dayOfYear + ", idx " + idx + ")");
+  return rotated;
 }
 
 function researchTopics(niche, usedTopics) {
@@ -1484,6 +1557,8 @@ function run(niche, product_url) {
     }
     console.log("     → Topic: \"" + topicData.title + "\"");
     console.log("     → Angle: " + (topicData.angle||"general") + " | Theme: " + theme.name);
+    // Persist IMMEDIATELY so even if video fails, this topic won't repeat tomorrow
+    persistTopicSeed(topicData.title);
     return generateScript(topicData, niche, product_url);
   }).then(function(script) {
     scriptText = script;
