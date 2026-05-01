@@ -280,6 +280,85 @@ function publishPost(accessToken, title, content, labels) {
   });
 }
 
+// ── BLOG TITLE GENERATOR ─────────────────────────────────────────────────────
+function generateBlogTitle(niche, blogContent, today) {
+  // Pull the most interesting keyword from the blog content
+  var content = (blogContent || "").replace(/<[^>]+>/g, " ").toLowerCase();
+
+  // Title templates — rotate by day of week so every post looks different
+  var dayOfWeek = new Date().getDay(); // 0-6
+  var dollar = content.match(/\$[0-9,]+/) ? content.match(/\$[0-9,]+/)[0] : null;
+  var hasIRS = content.includes("irs") || content.includes("tax") || content.includes("audit") || niche.toLowerCase().includes("tax") || niche.toLowerCase().includes("irs");
+  var hasAI = content.includes("ai ") || content.includes("chatgpt") || content.includes("automat") || niche.toLowerCase().includes("ai");
+  var hasCredit = content.includes("credit") || niche.toLowerCase().includes("credit");
+  var hasInvest = content.includes("invest") || content.includes("stock") || niche.toLowerCase().includes("invest");
+
+  // Priority: IRS titles get highest watch time
+  if (hasIRS) {
+    var irsTitles = [
+      "WARNING: IRS Is Targeting These Small Business Deductions in 2025",
+      "EXPOSED: The Tax Mistakes That Trigger IRS Audits for Small Business Owners",
+      "5 IRS Red Flags Small Business Owners Must Avoid This Year",
+      "Stop Filing Taxes Like This — The IRS Is Flagging These Returns",
+      "NEVER Miss These Business Tax Deductions — They Cost Owners $1,000s",
+      "The IRS Audit Survival Guide Every Small Business Owner Needs in 2025",
+      "WARNING: These 3 Business Expenses Are Getting Owners Audited in 2025",
+    ];
+    return irsTitles[dayOfWeek % irsTitles.length];
+  }
+
+  // AI topics
+  if (hasAI) {
+    var aiTitles = [
+      "EXPOSED: 5 AI Tools Replacing " + (dollar || "$500") + "/Month Software For Small Businesses",
+      "Stop Paying For These Tools — Free AI Does It Better in 2025",
+      "WARNING: These AI Tools Are Quietly Charging Hidden Fees Every Month",
+      "5 SECRET AI Automations That Run My Business While I Sleep",
+      "EXPOSED: How Big Corporations Use AI Tools They Hide From Small Business Owners",
+      "I Replaced My " + (dollar || "$3,200") + "/Month Agency With AI — Real Results",
+      "The FREE AI System That Saved My Business " + (dollar || "$12,000") + " This Year",
+    ];
+    return aiTitles[dayOfWeek % aiTitles.length];
+  }
+
+  // Credit topics
+  if (hasCredit) {
+    var creditTitles = [
+      "EXPOSED: The Credit Score Mistakes Costing Small Business Owners Thousands",
+      "Stop Doing This With Your Business Credit — Banks Are Watching",
+      "WARNING: These 5 Credit Habits Are Killing Your Business Loan Chances",
+      "SECRET: How to Build Business Credit From Zero in 90 Days",
+      "The Business Credit Secrets Banks Hope You Never Find Out",
+    ];
+    return creditTitles[dayOfWeek % creditTitles.length];
+  }
+
+  // Investing topics
+  if (hasInvest) {
+    var investTitles = [
+      "EXPOSED: The Investing Mistakes Small Business Owners Make Every Year",
+      "Stop Leaving Money on the Table — The Investment Strategy Most Owners Miss",
+      "WARNING: These Popular Investment Strategies Are Failing Small Business Owners",
+      "SECRET: How Self-Employed People Build Wealth Without a 401k",
+      "The " + (dollar || "$10,000") + " Investing Mistake 9 Out of 10 Business Owners Make",
+    ];
+    return investTitles[dayOfWeek % investTitles.length];
+  }
+
+  // Generic high-CTR fallbacks based on niche keyword
+  var nicheShort = niche.replace(/tips?|strategies?|for small business owners?|ideas?/gi, "").trim().slice(0, 40);
+  var genericTitles = [
+    "EXPOSED: The Hidden Costs Behind " + nicheShort + " Most Owners Never See",
+    "WARNING: The " + nicheShort + " Mistake That Cost Small Businesses " + (dollar || "$4,200") + " Last Year",
+    "5 SECRETS About " + nicheShort + " That Big Companies Don't Want You to Know",
+    "STOP Doing This With " + nicheShort + " — It's Quietly Hurting Your Business",
+    "The " + nicheShort + " Strategy No One Talks About — Until You're Already Behind",
+    "NEVER Start " + nicheShort + " Without Reading This First",
+    "I Tried Every " + nicheShort + " Strategy — Only These 3 Actually Work",
+  ];
+  return genericTitles[dayOfWeek % genericTitles.length];
+}
+
 // ── MAIN RUN ─────────────────────────────────────────────────────────────────
 async function run(niche, blogContent, videoUrl, productUrl) {
   if (!BLOG_ID) {
@@ -290,7 +369,8 @@ async function run(niche, blogContent, videoUrl, productUrl) {
     console.log("     → Posting to Blogger...");
     var accessToken = await getAccessToken();
     var today = new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" });
-    var title = niche + " Tips for Small Business Owners — " + today;
+    // Generate a high-CTR title that matches the blog content instead of the boring niche+date formula
+    var title = generateBlogTitle(niche, blogContent, today);
     var labels = niche.split(/[\s\/,]+/)
       .filter(function(w) { return w.length > 2; })
       .slice(0, 5)
