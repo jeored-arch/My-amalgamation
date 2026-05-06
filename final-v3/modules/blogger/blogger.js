@@ -107,145 +107,398 @@ function extractVideoId(url) {
 
 // ── BUILD FULL STYLED POST ────────────────────────────────────────────────────
 function buildPostHTML(niche, blogContent, videoUrl, productUrl) {
-  // Get Amazon affiliate products for this niche
   var amazonProducts = getAmazonLinksForNiche(niche, 3);
-  var amazonSection = "";
-  if (amazonProducts.length > 0) {
-    var amazonItems = amazonProducts.map(function(p) {
-      return '<a href="' + p.url + '" target="_blank" style="display:block;padding:10px 12px;margin:6px 0;background:#fff;border:1px solid #e0e0e0;border-radius:6px;text-decoration:none;color:#1a1a2e;font-family:Arial,sans-serif;font-size:13px;">'  + '📚 ' + p.name + ' →</a>';
-    }).join("");
-    amazonSection = `
-    <div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin:32px 0;">
-      <h3 style="font-family:Arial,sans-serif;font-size:17px;color:#1a1a2e;margin:0 0 12px 0;">📚 Recommended Reading</h3>
-      <p style="font-family:Arial,sans-serif;font-size:13px;color:#666;margin:0 0 12px 0;">Books and resources that go deeper on this topic:</p>
-      ${amazonItems}
-      <p style="font-family:Arial,sans-serif;font-size:11px;color:#999;margin:12px 0 0 0;">As an Amazon Associate I earn from qualifying purchases.</p>
-    </div>`;
-  }
-
   var storeUrl  = "https://" + STORE_DOMAIN + "/store";
   var videoId   = videoUrl ? extractVideoId(videoUrl) : null;
   var today     = new Date().toLocaleDateString("en-US", { year:"numeric", month:"long", day:"numeric" });
+  var parsed    = parseContentBlocks(blogContent || "");
 
-  // Parse blog content into sections
-  var sections  = parseSections(blogContent || "");
+  // ── INLINE CSS (Blogger strips external sheets) ──────────────────────────────
+  var css = `
+    <style>
+      .sb-wrap { max-width: 780px; margin: 0 auto; font-family: Georgia, 'Times New Roman', serif; color: #1A1208; line-height: 1.75; }
+      .sb-wrap * { box-sizing: border-box; }
+      .sb-wrap p { font-size: 16px; margin: 0 0 1.1em; color: #3D3020; }
+      .sb-wrap h2 { font-family: 'Georgia', serif; font-size: 22px; font-weight: 700; color: #1A1208; margin: 2em 0 .6em; padding-bottom: .4em; border-bottom: 2px solid #E8DFC8; line-height: 1.3; }
+      .sb-wrap h3 { font-family: Georgia, serif; font-size: 18px; font-weight: 700; color: #3D3020; margin: 1.6em 0 .5em; }
+      .sb-wrap strong { font-weight: 700; color: #1A1208; }
+      .sb-wrap a { color: #C8501A; }
+      .sb-wrap ul, .sb-wrap ol { padding-left: 1.4em; margin: 0 0 1.1em; }
+      .sb-wrap li { margin-bottom: .4em; font-size: 15px; color: #3D3020; }
+      /* Hero */
+      .sb-hero { background: linear-gradient(145deg,#1A0C04,#2D1A08,#1A2810); border-radius: 10px; padding: 32px 28px; margin-bottom: 28px; }
+      .sb-hero-cat { display: inline-block; background: #C8501A; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; padding: 4px 12px; border-radius: 3px; margin-bottom: 14px; font-family: monospace; }
+      .sb-hero h1 { font-family: Georgia, serif; font-size: 28px; color: #FDFAF4; margin: 0 0 10px; line-height: 1.25; font-weight: 700; }
+      .sb-hero-sub { font-size: 14px; color: rgba(253,250,244,.65); font-style: italic; margin: 0 0 18px; line-height: 1.6; }
+      .sb-meta { display: flex; gap: 16px; flex-wrap: wrap; }
+      .sb-meta span { font-size: 12px; color: rgba(253,250,244,.45); font-family: monospace; }
+      /* Bottom Line */
+      .sb-bottomline { background: #1A1208; border-radius: 10px; padding: 22px 26px; margin: 0 0 24px; position: relative; overflow: hidden; }
+      .sb-bottomline::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg,#C8501A,#E8742A); }
+      .sb-bl-label { font-size: 10px; font-family: monospace; letter-spacing: 2px; text-transform: uppercase; color: #E8742A; margin-bottom: 10px; font-weight: 700; }
+      .sb-bl-text { font-size: 15px; line-height: 1.75; color: rgba(253,250,244,.85); }
+      /* TL;DR */
+      .sb-tldr { background: #FFFDF8; border: 1px solid #E8DFC8; border-radius: 10px; padding: 20px 24px; margin: 0 0 24px; }
+      .sb-tldr-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid #E8DFC8; }
+      .sb-tldr-title { font-family: Georgia, serif; font-size: 15px; font-weight: 700; color: #1A1208; }
+      .sb-tldr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .sb-tldr-key { font-size: 10px; font-family: monospace; letter-spacing: 1px; text-transform: uppercase; color: #7A6A55; margin-bottom: 3px; font-weight: 700; }
+      .sb-tldr-val { font-size: 14px; font-weight: 600; color: #1A1208; line-height: 1.4; }
+      .sb-tldr-verdict { margin-top: 12px; padding-top: 12px; border-top: 1px solid #E8DFC8; font-size: 14px; font-style: italic; color: #3D3020; }
+      .sb-tldr-warn { margin-top: 6px; font-size: 13px; color: #C8501A; font-weight: 600; font-style: normal; }
+      /* Reality Check */
+      .sb-rc { background: #F5EFE0; border: 1px solid #E8DFC8; border-left: 4px solid #B8860B; border-radius: 0 8px 8px 0; padding: 18px 22px; margin: 1.8em 0; }
+      .sb-rc-label { font-size: 10px; font-family: monospace; letter-spacing: 2px; text-transform: uppercase; color: #B8860B; font-weight: 700; margin-bottom: 10px; }
+      .sb-rc-key { font-size: 11px; font-weight: 700; color: #7A6A55; font-family: monospace; margin-bottom: 3px; }
+      .sb-rc-val { font-size: 14px; color: #3D3020; margin-bottom: 10px; }
+      .sb-rc-verdict { margin-top: 10px; padding-top: 10px; border-top: 1px solid #E8DFC8; font-size: 14px; font-weight: 600; color: #1E6B3A; }
+      /* Callout */
+      .sb-callout { background: #EBF2FB; border-left: 4px solid #1A3D6B; padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 1.5em 0; font-size: 14px; color: #3D3020; line-height: 1.65; }
+      /* Pros Cons */
+      .sb-pc { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 1.5em 0; }
+      .sb-pc-box { border-radius: 9px; padding: 16px 18px; }
+      .sb-pros { background: #EAF5EE; border: 1px solid #A8D8BA; }
+      .sb-cons { background: #FDF0E8; border: 1px solid #F0B8A0; }
+      .sb-pc-title { font-family: Georgia, serif; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+      .sb-pros .sb-pc-title { color: #1E6B3A; }
+      .sb-cons .sb-pc-title { color: #C8501A; }
+      .sb-pc-list { list-style: none; padding: 0; margin: 0; }
+      .sb-pc-list li { font-size: 13px; padding: .3em 0 .3em 1.3em; position: relative; color: #3D3020; line-height: 1.5; }
+      .sb-pros .sb-pc-list li::before { content: "✓"; position: absolute; left: 0; color: #1E6B3A; font-weight: 700; }
+      .sb-cons .sb-pc-list li::before { content: "✗"; position: absolute; left: 0; color: #C8501A; font-weight: 700; }
+      /* Compare table */
+      .sb-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 1.5em 0; border: 1px solid #E8DFC8; border-radius: 8px; overflow: hidden; }
+      .sb-table th { background: #1A1208; color: #FDFAF4; padding: 10px 14px; text-align: left; font-family: monospace; font-size: 11px; letter-spacing: .5px; }
+      .sb-table td { padding: 9px 14px; border-bottom: 1px solid #E8DFC8; color: #3D3020; vertical-align: top; }
+      .sb-table tr:last-child td { border-bottom: none; }
+      .sb-table tr:nth-child(even) td { background: #F5EFE0; }
+      .sb-chk { color: #1E6B3A; font-weight: 700; }
+      .sb-x { color: #C8501A; font-weight: 700; }
+      /* Verdict */
+      .sb-verdict { background: linear-gradient(135deg,#EAF5EE,#FFFDF8); border: 1.5px solid #A8D8BA; border-radius: 10px; padding: 22px 26px; margin: 2em 0; }
+      .sb-verdict-label { font-size: 10px; font-family: monospace; letter-spacing: 2px; text-transform: uppercase; color: #1E6B3A; font-weight: 700; margin-bottom: 8px; }
+      .sb-verdict-score { font-family: Georgia, serif; font-size: 36px; font-weight: 700; color: #1E6B3A; line-height: 1; margin-bottom: 6px; }
+      .sb-verdict-text { font-size: 14px; color: #3D3020; line-height: 1.65; }
+      /* Video embed */
+      .sb-video-wrap { position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 8px; margin: 1.5em 0; }
+      .sb-video-wrap iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+      /* Amazon / CTA */
+      .sb-amazon { background: #F9F9F4; border: 1px solid #E8DFC8; border-radius: 8px; padding: 18px 22px; margin: 2em 0; }
+      .sb-amazon h3 { font-size: 16px; margin: 0 0 10px; color: #1A1208; }
+      .sb-amazon a { display: block; padding: 9px 12px; margin: 5px 0; background: #fff; border: 1px solid #E8DFC8; border-radius: 6px; text-decoration: none; font-size: 13px; color: #1A1208; }
+      .sb-amazon a:hover { border-color: #C8501A; }
+      .sb-amazon .sb-disclaimer { font-size: 11px; color: #7A6A55; margin-top: 8px; }
+      .sb-affiliate { background: linear-gradient(135deg,#EBF2FB,#FFFDF8); border: 1px solid #A9CCE3; border-radius: 8px; padding: 18px 22px; margin: 2em 0; }
+      .sb-affiliate h3 { font-size: 16px; margin: 0 0 8px; color: #1A3D6B; }
+      .sb-affiliate p { font-size: 14px; margin: 0 0 12px; color: #1A1208; }
+      .sb-affiliate a.sb-btn { display: inline-block; background: #1A3D6B; color: #fff; font-size: 14px; font-weight: 700; padding: 10px 20px; border-radius: 6px; text-decoration: none; }
+      .sb-store { background: linear-gradient(135deg,#FEF9E7,#FDF0E8); border: 1px solid #F0B27A; border-radius: 8px; padding: 18px 22px; margin: 2em 0; }
+      .sb-store h3 { font-size: 16px; margin: 0 0 8px; color: #784212; }
+      .sb-store a.sb-btn { background: #C8501A; color: #fff; display: inline-block; font-size: 14px; font-weight: 700; padding: 10px 20px; border-radius: 6px; text-decoration: none; }
+      .sb-footer { border-top: 2px solid #E8DFC8; margin-top: 36px; padding-top: 18px; text-align: center; }
+      .sb-footer p { font-size: 12px; color: #7A6A55; margin: 0; line-height: 1.8; }
+      .sb-footer a { color: #C8501A; text-decoration: none; }
+    </style>`;
 
-  var videoSection = videoId ? `
-    <div style="margin:32px 0;">
-      <h2 style="font-family:Arial,sans-serif;font-size:20px;color:#1a1a2e;border-left:4px solid #0066cc;padding-left:12px;margin-bottom:16px;">
-        📺 Watch The Full Video
-      </h2>
-      <div style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
-        <iframe src="https://www.youtube.com/embed/${videoId}"
-          style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;"
-          allowfullscreen></iframe>
+  // ── HERO ──────────────────────────────────────────────────────────────────
+  var readTime = Math.max(4, Math.ceil((blogContent || "").split(" ").length / 220));
+  var hero = `
+    <div class="sb-hero">
+      <div class="sb-hero-cat">SmallBiz AI Hub · Analysis</div>
+      <h1>${niche}</h1>
+      <p class="sb-hero-sub">${parsed.subtitle || "Practical AI strategies for small business owners who want results, not hype."}</p>
+      <div class="sb-meta">
+        <span>📅 ${today}</span>
+        <span>⏱ ${readTime} min read</span>
+        <span>✓ Independently written</span>
       </div>
-      <p style="font-family:Arial,sans-serif;font-size:13px;color:#666;margin-top:8px;text-align:center;">
-        Subscribe to <strong>SmallBiz AI Hub</strong> for daily business tips
-      </p>
+    </div>`;
+
+  // ── BOTTOM LINE ────────────────────────────────────────────────────────────
+  var bottomLine = parsed.bottomLine ? `
+    <div class="sb-bottomline">
+      <div class="sb-bl-label">📋 The Bottom Line — Read This First</div>
+      <div class="sb-bl-text">${parsed.bottomLine}</div>
     </div>` : "";
 
-  var contentSection = `
-    <div style="margin:32px 0;">
-      <h2 style="font-family:Arial,sans-serif;font-size:20px;color:#1a1a2e;border-left:4px solid #0066cc;padding-left:12px;margin-bottom:16px;">
-        💡 What You'll Learn
-      </h2>
-      ${sections}
-    </div>`;
+  // ── TL;DR ──────────────────────────────────────────────────────────────────
+  var tldr = parsed.tldr ? `
+    <div class="sb-tldr">
+      <div class="sb-tldr-head"><span style="font-size:20px">⚡</span><span class="sb-tldr-title">TL;DR — The Quick Takeaway</span></div>
+      <div class="sb-tldr-grid">${parsed.tldr}</div>
+      ${parsed.verdict ? '<div class="sb-tldr-verdict">' + parsed.verdict + "</div>" : ""}
+      ${parsed.warning ? '<div class="sb-tldr-warn">⚠️ ' + parsed.warning + "</div>" : ""}
+    </div>` : "";
 
+  // ── VIDEO ──────────────────────────────────────────────────────────────────
+  var videoSection = videoId ? `
+    <h2>📺 Watch the Full Breakdown</h2>
+    <div class="sb-video-wrap">
+      <iframe src="https://www.youtube.com/embed/${videoId}" allowfullscreen></iframe>
+    </div>
+    <p style="font-size:13px;color:#7A6A55;text-align:center;margin-top:6px;">Subscribe to <strong>SmallBiz AI Hub</strong> for daily business tips</p>` : "";
+
+  // ── MAIN CONTENT ───────────────────────────────────────────────────────────
+  var mainContent = formatContentBlocks(parsed.sections);
+
+  // ── PROS / CONS ────────────────────────────────────────────────────────────
+  var proscons = (parsed.pros.length > 0 || parsed.cons.length > 0) ? `
+    <div class="sb-pc">
+      <div class="sb-pc-box sb-pros">
+        <div class="sb-pc-title">✓ What Works</div>
+        <ul class="sb-pc-list">${parsed.pros.map(function(p){ return "<li>" + p + "</li>"; }).join("")}</ul>
+      </div>
+      <div class="sb-pc-box sb-cons">
+        <div class="sb-pc-title">✗ Watch Out For</div>
+        <ul class="sb-pc-list">${parsed.cons.map(function(p){ return "<li>" + p + "</li>"; }).join("")}</ul>
+      </div>
+    </div>` : "";
+
+  // ── FINAL VERDICT ──────────────────────────────────────────────────────────
+  var verdictBlock = parsed.finalVerdict ? `
+    <div class="sb-verdict">
+      <div class="sb-verdict-label">🏆 Our Take</div>
+      <div class="sb-verdict-score">${parsed.score || "★★★★☆"}</div>
+      <div class="sb-verdict-text">${parsed.finalVerdict}</div>
+    </div>` : "";
+
+  // ── AMAZON BOOKS ───────────────────────────────────────────────────────────
+  var amazonSection = "";
+  if (amazonProducts.length > 0) {
+    var items = amazonProducts.map(function(p) {
+      return '<a href="' + p.url + '" target="_blank">📚 ' + p.name + ' →</a>';
+    }).join("");
+    amazonSection = `
+      <div class="sb-amazon">
+        <h3>📚 Recommended Reading</h3>
+        <p style="font-size:13px;color:#7A6A55;margin:0 0 10px;">Books that go deeper on this topic:</p>
+        ${items}
+        <p class="sb-disclaimer">As an Amazon Associate I earn from qualifying purchases.</p>
+      </div>`;
+  }
+
+  // ── ELEVENLABS AFFILIATE ────────────────────────────────────────────────────
   var affiliateSection = `
-    <div style="background:linear-gradient(135deg,#e8f4fd,#d6eaf8);border:1px solid #a9cce3;border-radius:8px;padding:20px;margin:32px 0;">
-      <h3 style="font-family:Arial,sans-serif;font-size:17px;color:#1a5276;margin:0 0 8px 0;">
-        🎙️ The AI Voice Tool Powering This Content
-      </h3>
-      <p style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a2e;margin:0 0 12px 0;">
-        Every video on this channel uses <strong>ElevenLabs</strong> for voiceover — the most realistic AI voice tool available. 
-        If you create content or want to automate your business with AI voice, this is the tool I use every single day.
-      </p>
-      <a href="${ELEVENLABS_LINK}" target="_blank"
-        style="display:inline-block;background:#0066cc;color:#fff;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;text-decoration:none;">
-        Try ElevenLabs Free →
-      </a>
+    <div class="sb-affiliate">
+      <h3>🎙️ The AI Voice Tool Behind This Content</h3>
+      <p>Every video on this channel uses <strong>ElevenLabs</strong> for voiceover — the most realistic AI voice available. If you create content or want to automate with AI voice, this is what I use daily.</p>
+      <a href="${ELEVENLABS_LINK}" target="_blank" class="sb-btn">Try ElevenLabs Free →</a>
     </div>`;
 
+  // ── STORE CTA ──────────────────────────────────────────────────────────────
   var storeSection = `
-    <div style="background:linear-gradient(135deg,#fef9e7,#fdebd0);border:1px solid #f0b27a;border-radius:8px;padding:20px;margin:32px 0;">
-      <h3 style="font-family:Arial,sans-serif;font-size:17px;color:#784212;margin:0 0 8px 0;">
-        🛒 Free Business Toolkits & Digital Guides
-      </h3>
-      <p style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a2e;margin:0 0 12px 0;">
-        Get our ready-to-use templates, guides, and toolkits designed specifically for small business owners. 
-        Instant download — no fluff, just tools that work.
-      </p>
-      <a href="${storeUrl}" target="_blank"
-        style="display:inline-block;background:#e67e22;color:#fff;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;padding:10px 20px;border-radius:6px;text-decoration:none;">
-        Browse the Store →
-      </a>
+    <div class="sb-store">
+      <h3>🛒 Free Business Toolkits & Digital Guides</h3>
+      <p style="font-size:14px;color:#1A1208;margin:0 0 12px;">Ready-to-use templates and guides for small business owners. Instant download, no fluff.</p>
+      <a href="${storeUrl}" target="_blank" class="sb-btn">Browse the Store →</a>
     </div>`;
 
-  var footerSection = `
-    <div style="border-top:2px solid #eee;margin-top:40px;padding-top:20px;text-align:center;">
-      <p style="font-family:Arial,sans-serif;font-size:13px;color:#888;margin:0;">
-        Published by <strong>SmallBiz AI Hub</strong> · ${today}<br>
-        <a href="https://www.youtube.com/@SmallBizAIHub" target="_blank" style="color:#0066cc;text-decoration:none;">YouTube</a> · 
-        <a href="${storeUrl}" target="_blank" style="color:#0066cc;text-decoration:none;">Store</a> · 
-        <a href="https://smallbizaidaily.blogspot.com" target="_blank" style="color:#0066cc;text-decoration:none;">Blog</a>
-      </p>
-    </div>`;
+  // ── PRODUCT CTA ────────────────────────────────────────────────────────────
+  var productSection = productUrl ? `
+    <div style="background:#1A1208;border-radius:10px;padding:22px 26px;margin:2em 0;text-align:center;">
+      <p style="font-size:12px;font-family:monospace;letter-spacing:2px;color:#E8742A;margin:0 0 8px;font-weight:700;">FEATURED RESOURCE</p>
+      <p style="font-size:17px;font-weight:700;color:#FDFAF4;margin:0 0 12px;line-height:1.4;">Get the full toolkit for this topic</p>
+      <a href="${productUrl}" target="_blank" style="display:inline-block;background:#C8501A;color:#fff;font-size:14px;font-weight:700;padding:11px 24px;border-radius:6px;text-decoration:none;">Get Instant Access →</a>
+    </div>` : "";
 
-  // Hero header
-  var header = `
-    <div style="background:linear-gradient(135deg,#1a1a2e,#0066cc);border-radius:8px;padding:28px 24px;margin-bottom:32px;text-align:center;">
-      <p style="font-family:Arial,sans-serif;font-size:12px;color:#a0c4ff;margin:0 0 8px 0;letter-spacing:2px;text-transform:uppercase;">SmallBiz AI Hub</p>
-      <h1 style="font-family:Arial,sans-serif;font-size:26px;color:#ffffff;margin:0 0 8px 0;line-height:1.3;">
-        ${niche}
-      </h1>
-      <p style="font-family:Arial,sans-serif;font-size:13px;color:#cce4ff;margin:0;">
-        Daily tips to grow and automate your small business with AI
+  // ── FOOTER ──────────────────────────────────────────────────────────────────
+  var footer = `
+    <div class="sb-footer">
+      <p>Published by <strong>SmallBiz AI Hub</strong> · ${today}<br>
+        <a href="https://www.youtube.com/@SmallBizAIHub" target="_blank">YouTube</a> ·
+        <a href="${storeUrl}" target="_blank">Store</a> ·
+        <a href="https://smallbizaidaily.blogspot.com" target="_blank">Blog</a>
       </p>
     </div>`;
 
-  return header + videoSection + contentSection + amazonSection + affiliateSection + storeSection + footerSection;
+  return css + '<div class="sb-wrap">' +
+    hero + bottomLine + tldr +
+    videoSection + mainContent +
+    proscons + verdictBlock +
+    amazonSection + affiliateSection +
+    storeSection + productSection + footer +
+    "</div>";
 }
 
-// ── PARSE BLOG CONTENT INTO STYLED SECTIONS ───────────────────────────────────
-function parseSections(content) {
-  if (!content) return "<p style='font-family:Arial,sans-serif;font-size:15px;color:#333;'>Check back soon for today's tips.</p>";
+// ── PARSE CONTENT INTO STRUCTURED BLOCKS ────────────────────────────────────
+function parseContentBlocks(raw) {
+  var result = {
+    subtitle:     "",
+    bottomLine:   "",
+    tldr:         "",
+    verdict:      "",
+    warning:      "",
+    score:        "",
+    finalVerdict: "",
+    pros:         [],
+    cons:         [],
+    sections:     []  // array of {type, content}
+  };
 
-  // Strip markdown heading hashes and split into paragraphs
-  var lines = content
-    .replace(/<p>|<\/p>|<br>/g, "\n")
-    .split("\n")
-    .map(function(l) { return l.trim(); })
-    .filter(function(l) { return l.length > 0; });
+  if (!raw) return result;
 
+  // Strip HTML tags for parsing
+  var text = raw.replace(/<br\s*\/?>/gi, "\n").replace(/<p>/gi, "\n").replace(/<\/p>/gi, "").replace(/<[^>]+>/g, "");
+  var lines = text.split("\n").map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 0; });
+
+  var inPros = false, inCons = false, currentSection = null;
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+
+    // Bottom line
+    if (/bottom line|key takeaway/i.test(line) && line.length < 60) { continue; }
+    if (/^the bottom line[\s:]/i.test(line)) { result.bottomLine = lines[i+1] || ""; i++; continue; }
+
+    // TL;DR items (lines like "What It Is: ...")
+    if (/^(what it is|best for|price|platform|who should|bottom line)[\s:]/i.test(line)) {
+      var parts = line.split(/:\s*/);
+      if (parts.length >= 2) {
+        result.tldr += '<div><div class="sb-tldr-key">' + parts[0] + '</div><div class="sb-tldr-val">' + parts.slice(1).join(": ") + '</div></div>';
+      }
+      continue;
+    }
+
+    // Verdict / Our Take
+    if (/^(our take|verdict|final thoughts?|final verdict)[\s:]/i.test(line)) {
+      result.finalVerdict = lines.slice(i+1, i+4).join(" ");
+      i += 3;
+      continue;
+    }
+
+    // Score line  ★★★★☆ or 4.5/5 or 4/5
+    if (/[★☆]|\/5/.test(line) && line.length < 30) {
+      result.score = line;
+      continue;
+    }
+
+    // Warning / The Catch
+    if (/^⚠️|^the catch|^warning[\s:]/i.test(line)) {
+      result.warning = line.replace(/^⚠️\s*|^the catch[\s:]*|^warning[\s:]*/i, "");
+      continue;
+    }
+
+    // Pros section
+    if (/^(pros|advantages|what works|benefits)[\s:✓]*/i.test(line) && line.length < 40) { inPros = true; inCons = false; continue; }
+    if (/^(cons|disadvantages|watch out|downsides)[\s:✗]*/i.test(line) && line.length < 40) { inCons = true; inPros = false; continue; }
+
+    // Bullet in pros/cons
+    if ((inPros || inCons) && /^[-*•✓✗]|^\d+\./.test(line)) {
+      var item = line.replace(/^[-*•✓✗]\s*|^\d+\.\s*/, "");
+      if (inPros) result.pros.push(item);
+      else result.cons.push(item);
+      continue;
+    } else if (inPros || inCons) {
+      inPros = false; inCons = false;
+    }
+
+    // H2 heading
+    if (/^#{1,2}\s/.test(line) || (line.length < 80 && /^[A-Z0-9]/.test(line) && i > 0 && lines[i-1].length === 0)) {
+      var heading = line.replace(/^#+\s*/, "");
+      result.sections.push({ type: "h2", content: heading });
+      continue;
+    }
+
+    // H3 heading
+    if (/^###\s/.test(line)) {
+      result.sections.push({ type: "h3", content: line.replace(/^###\s*/, "") });
+      continue;
+    }
+
+    // Reality Check block
+    if (/reality check|🔍/i.test(line) && line.length < 60) {
+      var rcLines = [];
+      var j = i + 1;
+      while (j < lines.length && j < i + 8) { rcLines.push(lines[j]); j++; }
+      result.sections.push({ type: "rc", content: rcLines.join("\n") });
+      i = j - 1;
+      continue;
+    }
+
+    // Callout / Key Takeaway
+    if (/^💡|^key takeaway|^pro tip/i.test(line)) {
+      result.sections.push({ type: "callout", content: line.replace(/^💡\s*|^key takeaway[\s:]*|^pro tip[\s:]*/i, "") + (lines[i+1] ? " " + lines[i+1] : "") });
+      i++;
+      continue;
+    }
+
+    // Numbered tip
+    if (/^\d+[\.\)]\s/.test(line)) {
+      result.sections.push({ type: "tip", num: line.match(/^\d+/)[0], content: line.replace(/^\d+[\.\)]\s*/, "") });
+      continue;
+    }
+
+    // Bullet
+    if (/^[-*•]\s/.test(line)) {
+      result.sections.push({ type: "bullet", content: line.replace(/^[-*•]\s*/, "") });
+      continue;
+    }
+
+    // Regular paragraph (skip very short lines that look like labels)
+    if (line.length > 20) {
+      result.sections.push({ type: "p", content: line });
+    }
+  }
+
+  return result;
+}
+
+// ── FORMAT SECTIONS INTO STYLED HTML ────────────────────────────────────────
+function formatContentBlocks(sections) {
   var html = "";
-  var tipCount = 0;
-  var tipColors = ["#0066cc", "#e67e22", "#27ae60"];
+  var tipColors = ["#C8501A", "#1A3D6B", "#1E6B3A", "#B8860B"];
+  var tipCount  = 0;
+  var bulletBuffer = [];
 
-  lines.forEach(function(line) {
-    // Detect headings (markdown # or bold lines)
-    if (/^#+\s/.test(line)) {
-      var text = line.replace(/^#+\s/, "");
-      html += `<h3 style="font-family:Arial,sans-serif;font-size:17px;color:#1a1a2e;margin:24px 0 8px 0;">${text}</h3>`;
-    }
-    // Detect tip lines (numbered or bullet)
-    else if (/^(\d+\.|[-*•])/.test(line)) {
-      var color = tipColors[tipCount % tipColors.length];
+  function flushBullets() {
+    if (bulletBuffer.length === 0) return "";
+    var out = '<ul>' + bulletBuffer.map(function(b){ return "<li>" + b + "</li>"; }).join("") + "</ul>";
+    bulletBuffer = [];
+    return out;
+  }
+
+  for (var i = 0; i < sections.length; i++) {
+    var s = sections[i];
+
+    if (s.type !== "bullet") html += flushBullets();
+
+    if (s.type === "h2") {
+      html += "<h2>" + s.content + "</h2>";
+    } else if (s.type === "h3") {
+      html += "<h3>" + s.content + "</h3>";
+    } else if (s.type === "p") {
+      html += "<p>" + s.content + "</p>";
+    } else if (s.type === "tip") {
+      var col = tipColors[tipCount % tipColors.length];
       tipCount++;
-      var text = line.replace(/^(\d+\.|[-*•])\s*/, "");
-      html += `
-        <div style="display:flex;align-items:flex-start;margin:12px 0;padding:12px 16px;background:#f8f9fa;border-radius:6px;border-left:3px solid ${color};">
-          <span style="font-family:Arial,sans-serif;font-size:14px;font-weight:bold;color:${color};margin-right:10px;min-width:20px;">${tipCount}.</span>
-          <p style="font-family:Arial,sans-serif;font-size:14px;color:#333;margin:0;line-height:1.6;">${text}</p>
-        </div>`;
+      html += '<div style="display:flex;align-items:flex-start;margin:10px 0;padding:12px 16px;background:#F9F9F4;border-radius:6px;border-left:3px solid ' + col + ';">'
+           + '<span style="font-size:14px;font-weight:700;color:' + col + ';margin-right:10px;min-width:22px;font-family:monospace;">' + s.num + '.</span>'
+           + '<p style="font-size:15px;color:#3D3020;margin:0;line-height:1.65;">' + s.content + "</p></div>";
+    } else if (s.type === "bullet") {
+      bulletBuffer.push(s.content);
+    } else if (s.type === "callout") {
+      html += '<div class="sb-callout"><strong>💡 Key Takeaway:</strong> ' + s.content + "</div>";
+    } else if (s.type === "rc") {
+      var rcLines = s.content.split("\n").filter(function(l){ return l.trim(); });
+      var rcHTML  = '<div class="sb-rc"><div class="sb-rc-label">🔍 Reality Check</div>';
+      var rcVerdict = "";
+      rcLines.forEach(function(rl) {
+        if (/^verdict[\s:]/i.test(rl)) {
+          rcVerdict = rl.replace(/^verdict[\s:]*/i, "");
+        } else if (/^(marketing|actual|claimed?|experience)[\s:]/i.test(rl)) {
+          var rp = rl.split(/:\s*/);
+          rcHTML += '<div class="sb-rc-key">' + rp[0] + '</div><div class="sb-rc-val">' + rp.slice(1).join(": ") + "</div>";
+        } else if (rl.length > 10) {
+          rcHTML += '<div class="sb-rc-val">' + rl + "</div>";
+        }
+      });
+      if (rcVerdict) rcHTML += '<div class="sb-rc-verdict">✓ ' + rcVerdict + "</div>";
+      rcHTML += "</div>";
+      html += rcHTML;
     }
-    // Regular paragraph
-    else {
-      html += `<p style="font-family:Arial,sans-serif;font-size:15px;color:#444;line-height:1.7;margin:12px 0;">${line}</p>`;
-    }
-  });
+  }
 
+  html += flushBullets();
   return html;
 }
 
