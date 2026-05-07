@@ -33,6 +33,22 @@ let lastAgentRun   = null;   // YYYY-MM-DD string
 let lastNicheCheck = null;   // YYYY-MM-DD string (weekly)
 let isRunning      = false;
 
+// ── VIDEO FREQUENCY CONFIG ────────────────────────────────────────────────────
+// Alternates between 2-day and 3-day gaps to average ~2.5 days between videos.
+// Saves ~40% on ElevenLabs credits vs daily posting.
+// Pattern: post on day 0, skip day 1, post day 2, skip days 3+4, post day 5...
+var RUN_INTERVALS = [2, 3]; // days between runs, alternates
+var intervalIndex = 0;      // which interval we're currently using
+var lastRunDate   = null;   // Date object of last successful run
+
+function isDueToRun(now) {
+  if (!lastRunDate) return true; // never run before — go immediately
+  var gapDays = RUN_INTERVALS[intervalIndex % RUN_INTERVALS.length];
+  var msSinceRun = now - lastRunDate;
+  var daysSinceRun = msSinceRun / (1000 * 60 * 60 * 24);
+  return daysSinceRun >= gapDays;
+}
+
 async function runAgent() {
   if (isRunning) {
     console.log("  ⏳ Agent already running — skipping duplicate trigger");
@@ -77,9 +93,15 @@ async function tick() {
   const time    = timeStr(now);
   const dayOfWeek = now.getDay(); // 0=Sun
 
-  // ── DAILY AGENT RUN (8:00am) ──────────────────────────────────────────────
-  if (time === "08:00" && lastAgentRun !== today) {
+  // ── VIDEO RUN (every 2-3 days at 8:00am) ─────────────────────────────────
+  // Alternates 2-day / 3-day gaps to save ~40% on ElevenLabs credits.
+  if (time === "08:00" && lastAgentRun !== today && isDueToRun(now)) {
     lastAgentRun = today;
+    lastRunDate  = now;
+    intervalIndex++;
+    var nextGap = RUN_INTERVALS[intervalIndex % RUN_INTERVALS.length];
+    console.log("  📅 Video scheduled — next run in " + nextGap + " days");
+    await notify.sendTelegram("📅 <b>Agent running today</b>\nNext video in " + nextGap + " days\nSaving ElevenLabs credits between runs.").catch(function(){});
     await runAgent();
   }
 
@@ -105,7 +127,7 @@ async function main() {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
 ║  ⏰  CLOUD SCHEDULER — Running 24/7 on Railway       ║
-║  Daily agent: 8:00am ${(TZ || "").padEnd(25)}║
+║  Videos: every 2-3 days 8:00am ${(TZ || "").padEnd(25)}║
 ║  Niche check: Sundays 9:00am                         ║
 ╚══════════════════════════════════════════════════════╝
 `);
@@ -138,7 +160,8 @@ async function main() {
 ☁️ <b>Cloud Scheduler Started</b>
 
 Your agent is now running 24/7 on Railway.
-It will wake up automatically at 8:00am (${TZ}) every day.
+Videos post every 2-3 days at 8:00am (${TZ}).
+This saves ~40% on ElevenLabs credits.
 
 You don't need to do anything.
 Daily report will arrive in your email each morning.
