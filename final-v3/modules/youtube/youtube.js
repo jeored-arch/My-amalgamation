@@ -190,7 +190,8 @@ function makeThumbnail(title, theme, outputPath) {
   var stopRx = /^(the|and|for|with|that|this|are|was|you|your|how|why|what|when|from|have|will|they|about|these|those|into|also|than|then|more|most|just|been|some|over|such|after|before|every|each|both|while|its|not|but|can|all|get|do|of|in|on|to|a|an|i|so|my)$/i;
 
   // Prioritize power words for the thumbnail — these drive clicks
-  var POWER = ["STOP","NEVER","SECRET","WARNING","TRUTH","HACK","MISTAKE","MISTAKES","FREE","EXPOSED","FINALLY","QUIT","BROKE","RICH","FIRED","DONE","REAL","FAKE","LIES","DEAD","BANNED","SCAM","STOLEN","HIDDEN","ILLEGAL","AUDITED","CHEATING","LOOPHOLE","URGENT","LEAKED","BLOCKED","TRAP","RUINED","FLAGGED","CRUSHED","DELETED","SHOCKING","REVEALED","UNCOVERED","BUSTED"];
+  // Power words for dark history / mystery documentary channel
+  var POWER = ["REAL","UNTOLD","DARK","TRUTH","HIDDEN","MYSTERY","SECRET","VANISHED","DISAPPEARED","FORGOTTEN","DISTURBING","UNCOVERED","REVEALED","CLASSIFIED","SEALED","EVIDENCE","STRANGE","DISTURBING","UNSOLVED","UNEXPLAINED","TERRIFYING","SILENCED","BURIED","SHOCKING","DISCOVERED","LOST","FORBIDDEN"];
   var allWords = title.replace(/[^a-zA-Z0-9 ]/g," ").trim().split(/\s+/);
 
   // Pick the best 4-6 words: power words first, then meaningful non-stop words
@@ -276,6 +277,57 @@ function makeThumbnail(title, theme, outputPath) {
 // ── SLIDE BUILDER ─────────────────────────────────────────────────────────────
 
 // ── PEXELS IMAGE FETCH ───────────────────────────────────────────────────────
+
+// Fetch from Wikimedia Commons (FREE public domain historical images — better for history channel)
+function fetchWikimediaImage(query, outputPath) {
+  return new Promise(function(resolve) {
+    var searchQuery = encodeURIComponent(query + " historical");
+    var searchUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=" +
+      searchQuery + "&srnamespace=6&format=json&srlimit=5";
+    https.get(searchUrl, { headers: { "User-Agent": "UntoldArchive/1.0" } }, function(res) {
+      var data = "";
+      res.on("data", function(d) { data += d; });
+      res.on("end", function() {
+        try {
+          var results = JSON.parse(data);
+          var pages = (results.query && results.query.search) || [];
+          if (!pages.length) return resolve(null);
+          // Pick a result and fetch its image URL
+          var title = pages[0].title.replace("File:", "");
+          var imgUrl = "https://en.wikipedia.org/w/api.php?action=query&titles=File:" +
+            encodeURIComponent(title) + "&prop=imageinfo&iiprop=url&format=json";
+          https.get(imgUrl, { headers: { "User-Agent": "UntoldArchive/1.0" } }, function(res2) {
+            var d2 = "";
+            res2.on("data", function(chunk) { d2 += chunk; });
+            res2.on("end", function() {
+              try {
+                var info = JSON.parse(d2);
+                var pages2 = info.query && info.query.pages;
+                var page = pages2 && Object.values(pages2)[0];
+                var imgSrc = page && page.imageinfo && page.imageinfo[0] && page.imageinfo[0].url;
+                if (!imgSrc || !imgSrc.match(/\.(jpg|jpeg|png)/i)) return resolve(null);
+                // Download the image
+                https.get(imgSrc, { headers: { "User-Agent": "UntoldArchive/1.0" } }, function(imgRes) {
+                  if (imgRes.statusCode !== 200) return resolve(null);
+                  var chunks = [];
+                  imgRes.on("data", function(c) { chunks.push(c); });
+                  imgRes.on("end", function() {
+                    try {
+                      require("fs").writeFileSync(outputPath, Buffer.concat(chunks));
+                      if (require("fs").statSync(outputPath).size > 10000) {
+                        resolve(outputPath);
+                      } else { resolve(null); }
+                    } catch(e) { resolve(null); }
+                  });
+                }).on("error", function() { resolve(null); });
+              } catch(e) { resolve(null); }
+            });
+          }).on("error", function() { resolve(null); });
+        } catch(e) { resolve(null); }
+      });
+    }).on("error", function() { resolve(null); });
+  });
+}
 
 function fetchPexelsImage(query, outputPath) {
   var apiKey = process.env.PEXELS_API_KEY || config.pexels_api_key || "";
@@ -640,7 +692,7 @@ function splitIntoChunks(text, maxChars) {
 
 // Call ElevenLabs for a single chunk
 function elevenLabsChunk(text, apiKey, voiceId) {
-  var body = JSON.stringify({ text: text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } });
+  var body = JSON.stringify({ text: text, model_id: "eleven_turbo_v2_5", voice_settings: { stability: 0.35, similarity_boost: 0.85, style: 0.40, use_speaker_boost: true } });
   return new Promise(function(resolve) {
     var req = https.request({
       hostname: "api.elevenlabs.io", path: "/v1/text-to-speech/" + voiceId, method: "POST",
@@ -666,7 +718,17 @@ function elevenLabsChunk(text, apiKey, voiceId) {
 
 function generateVoiceover(text, outputPath) {
   var apiKey  = process.env.ELEVENLABS_API_KEY || (config.elevenlabs && config.elevenlabs.api_key) || "";
-  var voiceId = (config.elevenlabs && config.elevenlabs.voice_id) || "21m00Tcm4TlvDq8ikWAM";
+  // Smart voice selector for dark history / mystery documentary channel
+  // Priority: David Castlemore (proven mystery/thriller) → Frederick Surrey (British documentary)
+  // → Your cloned voice (earns 22% affiliate commission) → Daniel (broadcaster fallback)
+  // Set ELEVENLABS_CLONE_ID in Railway env vars to activate your clone as fallback
+  var VOICE_PRIORITY = [
+    process.env.ELEVENLABS_VOICE_DAVID || "nPczCjzI2devNBz1zQrb",  // David Castlemore — mystery/thriller
+    process.env.ELEVENLABS_VOICE_FREDERICK || "t0jbNlBVZ17f02VDIeMI", // Frederick Surrey — British documentary
+    process.env.ELEVENLABS_CLONE_ID || null,                          // Your clone (earns you commission)
+    "onwK4e9ZLuTAKqWW03F9",                                           // Daniel — Steady Broadcaster fallback
+  ].filter(Boolean)[0];
+  var voiceId = (config.elevenlabs && config.elevenlabs.voice_id) || VOICE_PRIORITY || "onwK4e9ZLuTAKqWW03F9";
   apiKey = apiKey.trim();
   if (!apiKey || apiKey.length < 10) { console.log("     → No ElevenLabs key"); return Promise.resolve(null); }
   console.log("     → ElevenLabs key: " + apiKey.slice(0,8) + "... (" + apiKey.length + " chars)");
@@ -745,19 +807,19 @@ function buildVideo(title, scriptText, outputPath, theme) {
   function buildImageQuery(slide, videoTitle) {
     var headline = (slide.headline || videoTitle || "").toLowerCase();
     var queryMap = [
-      { keywords: ["tax","irs","audit","deduction"], query: "business tax documents office" },
-      { keywords: ["ai","artificial intelligence","automation","chatgpt"], query: "artificial intelligence technology computer" },
-      { keywords: ["money","finance","budget","savings","invest"], query: "money finance business success" },
-      { keywords: ["small business","entrepreneur","startup"], query: "small business entrepreneur office" },
-      { keywords: ["credit","debt","loan"], query: "credit card financial planning" },
-      { keywords: ["income","revenue","profit","earn"], query: "business growth revenue chart" },
-      { keywords: ["stock","market","invest","portfolio"], query: "stock market investing finance" },
-      { keywords: ["gig","freelance","uber","doordash"], query: "gig economy freelancer working" },
-      { keywords: ["productivity","tools","software","app"], query: "productivity technology workplace" },
-      { keywords: ["secret","expose","hidden","reveal"], query: "business secret reveal shocking" },
-      { keywords: ["warning","danger","mistake","error"], query: "business warning danger alarm" },
-      { keywords: ["salary","job","career","employer","hr"], query: "office career professional workplace" },
-    ];
+      { keywords: ["war","battle","military","soldier","wwii","world war"], query: "world war historical black white photograph" },
+      { keywords: ["mystery","vanish","disappear","missing","unsolved","lost"], query: "dark mysterious abandoned place fog atmospheric" },
+      { keywords: ["space","nasa","planet","galaxy","universe","star","cosmos"], query: "nasa space galaxy nebula stunning photograph" },
+      { keywords: ["psychology","brain","mind","behavior","human","thought"], query: "human mind brain psychology science illustration" },
+      { keywords: ["history","historical","ancient","century","era","old","past"], query: "historical vintage photograph archive sepia" },
+      { keywords: ["crime","murder","death","investigation","detective"], query: "crime scene investigation detective noir vintage" },
+      { keywords: ["government","classified","secret","document","cia","fbi"], query: "classified government documents secret files" },
+      { keywords: ["radiation","nuclear","experiment","science","lab","chemical"], query: "vintage science laboratory experiment dangerous" },
+      { keywords: ["city","town","abandoned","ruin","ghost","empty","desolate"], query: "abandoned ghost town ruins atmospheric dark" },
+      { keywords: ["person","man","woman","figure","shadow","silhouette"], query: "mysterious silhouette person dramatic lighting" },
+      { keywords: ["ocean","sea","ship","wreck","deep","water","submarine"], query: "ocean deep dark mysterious shipwreck dramatic" },
+      { keywords: ["forest","woods","wilderness","dark","nature","trees"], query: "dark atmospheric forest fog mystery night" },
+    ]
     for (var i = 0; i < queryMap.length; i++) {
       for (var j = 0; j < queryMap[i].keywords.length; j++) {
         if (headline.includes(queryMap[i].keywords[j])) return queryMap[i].query;
@@ -1000,10 +1062,10 @@ var YT_AMAZON_PRODUCTS = [
   { name: "Atomic Habits",               asin: "0735211299", niches: ["productivity","business","habits","motivation","gen z","first job","remote","gig"] },
   { name: "I Will Teach You to Be Rich", asin: "0761147489", niches: ["finance","money","budget","gig economy","personal finance","gen z","first job"] },
   { name: "The Intelligent Investor",    asin: "0060555661", niches: ["investing","finance","stock","wealth","money","market"] },
-  { name: "Profit First",                asin: "073521414X", niches: ["finance","business","money","small business","accounting"] },
+  { name: "Profit First",                asin: "073521414X", niches: ["finance","business","money","history and mystery","accounting"] },
   { name: "The $100 Startup",            asin: "0307951529", niches: ["startup","business","entrepreneur","side hustle","passive income"] },
   { name: "AI Superpowers",              asin: "132854639X", niches: ["ai","automation","technology","tools","chatgpt"] },
-  { name: "Taxes Made Simple",           asin: "0981454224", niches: ["tax","irs","deduction","audit","gig economy","freelance","small business"] },
+  { name: "Taxes Made Simple",           asin: "0981454224", niches: ["tax","irs","deduction","audit","gig economy","freelance","history and mystery"] },
   { name: "Rich Dad Poor Dad",           asin: "1612680194", niches: ["investing","wealth","passive income","finance","money"] },
   { name: "The Total Money Makeover",    asin: "159555078X", niches: ["finance","debt","budget","money","personal finance","gig","tax"] },
   { name: "The Gig Economy",             asin: "0814438709", niches: ["gig economy","freelance","uber","side hustle","remote","independent"] },
@@ -1058,7 +1120,7 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
       .map(function(t){ return String(t).replace(/[<>]/g,"").replace(/,/g,"").trim().slice(0,30); })
       .filter(function(t){ return t.length > 0 && t.length <= 30; })
       .slice(0, 15);
-    if (cleanTags.length === 0) cleanTags = ["AI tools","small business","productivity"];
+    if (cleanTags.length === 0) cleanTags = ["AI tools","history and mystery","productivity"];
 
     var initBody = JSON.stringify({
       snippet: { title: (scriptData.title||"AI Tools Video").slice(0,100), description: buildDescription(scriptData.description||"Subscribe for daily videos!", scriptData.niche||""), tags: cleanTags, categoryId: "27" },
@@ -1254,7 +1316,11 @@ function researchTopics(niche, usedTopics) {
       { title: "7 FREE AI Tools Replacing $2,000/Month Software For Small Businesses", hook: "I built a complete business tech stack for $0 per month. Every single tool on this list has a free tier that actually works.", angle: "tools" },
       { title: "EXPOSED: Shopify Is Taking More Money Than You Think — Check Your Statement", hook: "Most Shopify store owners focus on transaction fees. They completely miss the three other ways Shopify is quietly taking money.", angle: "exposed" },
       { title: "WARNING: Your Business Bank Account Is Not FDIC Insured — Here Is Why", hook: "If you use a fintech business account, your money may not be protected the way you think it is. This is not hypothetical.", angle: "warning" },
-      { title: "NEVER Use PayPal For Business Until You Understand This Policy", hook: "PayPal froze $92,000 of a small business owner I know last year. Completely legal. Here is the specific clause they used.", angle: "warning" },
+      { title: "The Man Who Accidentally Discovered Radiation — And Paid With His Life", hook: "Her fingers were glowing in the dark. Not metaphorically. Literally glowing. And she had no idea why — until it was too late.", angle: "dark_history" },
+      { title: "The City That Vanished Overnight — And Nobody Was Allowed To Talk About It", hook: "In 1908, an entire town of 1,500 people ceased to exist in under four hours. The government sealed the records for sixty years.", angle: "mystery" },
+      { title: "The Psychology Behind Why You Cannot Stop Scrolling — It Was Designed This Way", hook: "There is a room in Menlo Park where engineers spent years figuring out how to make you feel empty so you would keep scrolling. This is what they built.", angle: "psychology" },
+      { title: "What Really Happened to the Romanovs — The Evidence Changes Everything", hook: "For seventy years, the world believed they knew exactly what happened in that basement in 1918. They were wrong about almost everything.", angle: "dark_history" },
+      { title: "The Deepest Hole Ever Dug — And What They Found That Terrified Scientists", hook: "In 1970, Soviet scientists began drilling into the earth. Twelve miles down, they found something that rewrote everything we thought we knew about our planet.", angle: "science_mystery" },
     ];
     return [fallbacks[day % fallbacks.length]];
   });
@@ -1263,17 +1329,17 @@ function researchTopics(niche, usedTopics) {
 function generateScript(topic, niche, product_url) {
   return client.messages.create({
     model: config.anthropic.model, max_tokens: 4096,
-    system: "You are the highest-paid YouTube scriptwriter in the small business and AI finance space. Every script you write gets watched because:\n" +
-      "1. Your FIRST SENTENCE drops the viewer into a real story or shocking specific fact — never a greeting, never a setup\n" +
-      "2. You write exactly like a trusted friend who just discovered something that could save or cost the viewer thousands of dollars\n" +
-      "3. Every 90 seconds you plant a CURIOSITY GAP — tease something coming up that they absolutely cannot miss\n" +
-      "4. You use SPECIFIC REAL details — exact dollar amounts ($847, $4,200), real tool names, real timeframes\n" +
-      "5. Your pacing creates URGENCY — short punchy sentences for shocking facts, longer flowing sentences for explanations\n" +
-      "6. You NEVER say: Hey guys, Welcome back, Do not forget to like, Smash that subscribe button, Today we are going to, Let me know in the comments\n" +
-      "7. Every section makes the viewer feel like they are ALREADY losing money or missing out if they stop watching\n" +
-      "8. Your CTAs feel EARNED not begged — they happen naturally after you just gave the viewer real value\n" +
-      "9. You reference a VILLAIN in every video (IRS, Big Corp, Banks, Platforms, Bad Advisors) — someone the viewer can be angry at\n" +
-      "10. Your endings leave viewers feeling smart for watching, not relieved it is over\n" +
+    system: "You are a world-class documentary narrator and historian — the voice behind channels like Forgotten History and Untold Archive. Every script you write gets millions of views because:\n" +
+      "1. You START WITH THE END — your very first sentence reveals the most shocking moment of the entire story. MrBallen's rule: if you want a story to land, start with the end.\n" +
+      "2. You write in PRESENT TENSE for historical events — not \'In 1943, a man died\' but \'It is 1943. A man is dying.\' This makes history feel immediate.\n" +
+      "3. Every 90 seconds you plant a CURIOSITY GAP — something the viewer needs to know that you reveal later.\n" +
+      "4. You use SPECIFIC REAL details — real dates, real names, real places, real numbers. Vague history loses viewers.\n" +
+      "5. Your pacing creates SUSPENSE — short punchy sentences for shocking revelations, longer flowing sentences for building atmosphere.\n" +
+      "6. You NEVER say: Hey guys, Welcome back, In this video, Today we are going to, Make sure to subscribe, Let me know in the comments.\n" +
+      "7. You build DREAD slowly — the viewer should feel unease building throughout the video.\n" +
+      "8. Mid-video you drop a subscribe line naturally: \'If stories like this fascinate you, subscribe — I upload one every single week.\'\n" +
+      "9. You end with a LINGERING QUESTION — something that stays with the viewer after the video ends.\n" +
+      "10. You NEVER sensationalize — the facts are disturbing enough. Your tone is calm, measured, authoritative. Like a respected historian who has seen too much.\n" +
       "NEVER use bullet points in spoken narration. NEVER sound like AI wrote this. NEVER be vague when a specific number works.",
     messages: [{ role: "user", content:
       "Write a complete 10-12 minute YouTube script for: \"" + topic.title + "\"\n" +
@@ -1365,7 +1431,7 @@ function generateMetadata(topic, niche) {
       meta.description = topic.hook + "\n\nIn this video: " + topic.title + "\n\nSubscribe for daily videos on " + niche + ".";
     }
     if (!meta.tags || meta.tags.length < 5) {
-      meta.tags = [niche, "AI tools", "small business", "productivity", "2025", "2026", "tutorial", "how to", topic.angle||"tips", "make money online"];
+      meta.tags = [niche, "AI tools", "history and mystery", "productivity", "2025", "2026", "tutorial", "how to", topic.angle||"tips", "make money online"];
     }
     meta.category = "27";
     return meta;
