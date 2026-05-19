@@ -496,7 +496,7 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
       '<rect y="' + (H-6) + '" width="' + W + '" height="6" fill="url(#accentbar)"/>' +
       // Channel tag top left
       '<rect x="30" y="20" width="220" height="36" fill="#' + theme.accent + '" opacity="0.9" rx="4"/>' +
-      '<text x="140" y="44" font-family="' + fontFamily + '" font-size="18" font-weight="bold" fill="white" text-anchor="middle">SmallBiz AI Hub</text>' +
+      '<text x="140" y="44" font-family="' + fontFamily + '" font-size="18" font-weight="bold" fill="white" text-anchor="middle">Untold Archive</text>' +
       // Accent divider line above title
       '<rect x="100" y="' + (startY - 40) + '" width="' + (W - 200) + '" height="3" fill="#' + theme.accent + '" opacity="0.8" rx="2"/>' +
       els +
@@ -559,7 +559,7 @@ function makeSlidePng(slide, theme, outputPath, bgImagePath) {
     }
 
     // Channel watermark bottom right
-    var watermark = '<text x="' + (W - 20) + '" y="' + (H - 15) + '" font-family="' + fontFamily + '" font-size="16" fill="white" text-anchor="end" opacity="0.5">SmallBiz AI Hub</text>';
+    var watermark = '<text x="' + (W - 20) + '" y="' + (H - 15) + '" font-family="' + fontFamily + '" font-size="16" fill="white" text-anchor="end" opacity="0.5">Untold Archive</text>';
 
     svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
       '<defs>' +
@@ -1177,36 +1177,36 @@ function uploadVideo(videoFilePath, scriptData, thumbnailPath) {
 
 // Rotating niche expansions — keeps content fresh across related topics
 var NICHE_ANGLES = [
-  "IRS tax deductions for small business owners",
-  "AI tools replacing expensive software in 2025",
-  "passive income strategies for entrepreneurs",
-  "small business bookkeeping automation",
-  "credit score hacks for business owners",
-  "side hustle income secrets exposed",
-  "investing for small business owners",
-  "digital product business without audience",
-  "freelancing rate negotiation tactics",
-  "hidden business banking fees exposed",
-  "QuickBooks alternatives that cost nothing",
-  "gig economy tax strategies 2025",
-  "AI replacing accountants and bookkeepers",
-  "small business audit survival guide",
-  "payroll mistakes that trigger IRS flags",
-  "Shopify and ecommerce hidden costs exposed",
-  "business credit building from zero",
-  "LLC vs sole proprietor tax secrets",
-  "cash flow management for solo entrepreneurs",
-  "ChatGPT automations saving businesses $1000s",
-  "freelance contract red flags exposed",
-  "PayPal and Stripe hidden fee breakdown",
-  "small business insurance mistakes",
-  "social media marketing without paid ads",
-  "email list building for small business",
-  "business deductions most owners miss",
-  "real estate investing for small business owners",
-  "retirement accounts for self employed people",
-  "pricing strategy secrets for service businesses",
-  "business loan secrets banks hide from you",
+  "dark untold history forgotten by textbooks",
+  "cold war secrets and classified experiments",
+  "psychology behind why people do what they do",
+  "unsolved mysteries and unexplained disappearances",
+  "space discoveries that changed everything",
+  "historical figures nobody talks about",
+  "government cover-ups and classified documents",
+  "disasters and catastrophes that changed history",
+  "ancient civilizations and lost knowledge",
+  "serial killers and criminal psychology",
+  "cold cases and true crime mysteries",
+  "soviet union secret experiments and programs",
+  "world war secrets never taught in school",
+  "mysterious deaths of famous people",
+  "underground societies and secret organizations",
+  "paranormal events with scientific explanations",
+  "medical experiments that changed history",
+  "nuclear accidents and cover-ups",
+  "strange phenomena scientists cannot explain",
+  "historical hoaxes that fooled the world",
+  "lost civilizations and archaeological mysteries",
+  "mind control experiments exposed",
+  "royal family dark secrets throughout history",
+  "corporate cover-ups that hurt millions",
+  "space anomalies and unexplained discoveries",
+  "psychological manipulation tactics exposed",
+  "historical disasters governments tried to hide",
+  "famous missing persons cases never solved",
+  "dark origins of everyday things",
+  "Cold War near-misses that almost ended the world",
 ];
 
 function getRotatingNiche(baseNiche, usedCount) {
@@ -1242,58 +1242,38 @@ function researchTopics(niche, usedTopics) {
   return client.messages.create({
     model: config.anthropic.model, max_tokens: 1500,
     messages: [{ role: "user", content:
-      "You are a top YouTube strategist for a small business / finance / AI tools channel with a proven audience.\n\n" +
-      "You are the #1 YouTube strategist for small business owners, AI tools, and personal finance.\n" +
-      "Your ONLY job is generating titles that make someone stop scrolling and click IMMEDIATELY.\n\n" +
-      "Generate 8 HIGH-PERFORMING video topics for niche: \"" + activeNiche + "\"\n\n" +
-      (brainContext ? brainContext + "\n" : "") +
-      "ALREADY USED — DO NOT repeat or closely resemble these:\n" + avoidList + "\n\n" +
-      "━━━ PROVEN TITLE FORMULAS (ranked by actual CTR data) ━━━\n\n" +
-      "🥇 #1 FORMULA — 16.7% CTR proven on this channel:\n" +
-      "   [Number] SECRET [Topic] [Villain: Big Corp/IRS/Bank] EXPOSED\n" +
-      "   Examples: \'5 SECRET AI Tools Big Corporations Hide From Small Business Owners EXPOSED\'\n" +
-      "            \'7 SECRET IRS Loopholes Accountants Hope You Never Find Out\' \n\n" +
-      "🥇 #1 FORMULA VARIANT — same CTR tier:\n" +
-      "   WARNING: [Platform/Agency/IRS] Is [Secretly Doing Bad Thing] To [Victim]\n" +
-      "   Examples: \'WARNING: IRS Is Flagging These 3 Gig Worker Deductions in 2025\'\n" +
-      "            \'WARNING: QuickBooks Is Silently Charging Small Businesses Extra Fees\'\n\n" +
-      "🥈 #2 FORMULA — 12-14% CTR:\n" +
-      "   EXPOSED: The Hidden [Cost/Truth/Scam/Trap] Behind [Popular Tool/Strategy]\n" +
-      "   Examples: \'EXPOSED: The Hidden Monthly Fees Behind \"Free\" Business Banking\'\n" +
-      "            \'EXPOSED: Why Your Shopify Store Will Never Profit (The Real Math)\'\n\n" +
-      "🥈 #2 FORMULA VARIANT:\n" +
-      "   I Tried [Tool/Strategy] For [Timeframe] — [Shocking Honest Result]\n" +
-      "   Examples: \'I Tried Every AI Tool For 90 Days — Only 3 Are Worth Paying For\'\n" +
-      "            \'I Replaced My $3,200/Month Accountant With AI — Here\'s What Happened\'\n\n" +
-      "🥉 #3 FORMULA — 9-11% CTR:\n" +
-      "   Stop [Common Thing Everyone Does] — The IRS/Banks/Platforms Are [Consequence]\n" +
-      "   Examples: \'STOP Paying For These 5 Business Tools — Free AI Does It Better\'\n" +
-      "            \'Stop Filing Taxes Like This — The IRS Is Quietly Flagging These Returns\'\n\n" +
-      "🥉 #3 FORMULA VARIANT:\n" +
-      "   The [Dollar Amount] [Topic] Mistake Small Business Owners Make Every Year\n" +
-      "   Examples: \'The $4,200 Bookkeeping Mistake 9 Out of 10 Small Businesses Make\'\n" +
-      "            \'The $0 AI System Replacing $500/Month Software For Small Businesses\'\n\n" +
-      "━━━ NON-NEGOTIABLE TITLE RULES ━━━\n" +
-      "1. AT LEAST 5 of your 8 titles MUST start with or contain: EXPOSED, SECRET, WARNING, STOP, or NEVER\n" +
-      "2. Every title needs a VILLAIN (IRS, Big Corp, Banks, Landlords, Platforms, \"They\") or FEAR (audit, debt, fail, flagged, banned)\n" +
-      "3. Include a SPECIFIC DOLLAR AMOUNT in at least 4 titles — $847, $4,200, $0, $500/month\n" +
-      "4. Include \"2025\" or \"2026\" in at least 2 titles — algorithm favors recency signals\n" +
-      "5. IRS / tax / audit topic: MANDATORY — include exactly 1 per batch. These get 40% higher watch time\n" +
-      "6. Title length: 55-80 characters — punchy, front-load the power word\n" +
-      "7. Hook must create URGENCY or FEAR OF MISSING OUT — they should feel stupid for not clicking\n" +
-      "8. Write for small business owners aged 25-50 who fear audits, losing money, and being left behind by AI\n" +
-      "9. NEVER use: \'How to\', \'Tips for\', \'Guide to\', \'Introduction to\' — these are low-CTR filler phrases\n" +
-      "10. At least 1 title must reference a SPECIFIC TOOL (QuickBooks, ChatGPT, Shopify, PayPal, Stripe, etc.)\n\n" +
-      "━━━ HOOK RULES ━━━\n" +
-      "The hook (first line of the video) must:\n" +
-      "- Start MID-STORY or with a shocking specific fact, never a greeting\n" +
-      "- Include a real dollar amount or real timeframe\n" +
-      "- Make them feel like they are ALREADY losing money\n" +
-      "- Example good hook: \'Last Tuesday a client sent me a screenshot — QuickBooks had been charging her $127/month for a feature she never activated.\'\n" +
-      "- Example bad hook: \'Today we\'re going to talk about business tools.\'\n\n" +
-      "Return ONLY a valid JSON array, no markdown, no explanation:\n" +
-      "[{\"title\":\"WARNING: IRS Is Flagging These 5 AI Deductions in 2025 — Don\'t Get Audited\",\"hook\":\"My client got an IRS notice last month. The reason? She wrote off $3,400 in AI tools the wrong way. Here is exactly what not to do.\",\"angle\":\"warning\",\"niche\":\"" + activeNiche + "\"}]"
-    }],
+      "You are a world-class YouTube strategist for a dark history, mystery, and psychology documentary channel.\\n\\n" +
+      "Your ONLY job is generating titles that make someone stop scrolling and click IMMEDIATELY.\\n\\n" +
+      "Generate 8 HIGH-PERFORMING video topics for niche: \\\"" + activeNiche + "\\\"\\n\\n" +
+      (brainContext ? brainContext + "\\n" : "") +
+      "ALREADY USED — DO NOT repeat or closely resemble these:\\n" + avoidList + "\\n\\n" +
+      "PROVEN TITLE FORMULAS FOR DARK HISTORY CHANNELS:\\n\\n" +
+      "FORMULA 1 — MrBallen style (highest retention):\\n" +
+      "The [Person/Place] That [Shocking Fact] — And Nobody Was Allowed To Talk About It\\n" +
+      "Examples: The Man Who Saved The World — And Was Punished For It\\n" +
+      "         The City That Vanished Overnight — Nobody Was Allowed To Talk About It\\n\\n" +
+      "FORMULA 2 — Evidence style:\\n" +
+      "What Really Happened To [Famous Mystery] — The Evidence Changes Everything\\n" +
+      "Examples: What Really Happened To The Romanovs — The Evidence Changes Everything\\n\\n" +
+      "FORMULA 3 — Dark truth style:\\n" +
+      "The Untold Story of [Famous Person/Place] — What History Books Leave Out\\n" +
+      "Examples: The Untold Story of Nikola Tesla — What They Never Teach In School\\n\\n" +
+      "FORMULA 4 — Psychology style:\\n" +
+      "[Number] Psychology Facts That Will Change How You See [Common Thing]\\n" +
+      "Examples: 5 Psychology Facts That Explain Why You Cannot Stop Scrolling\\n\\n" +
+      "FORMULA 5 — Mystery style:\\n" +
+      "The [Object/Place/Event] That Scientists Cannot Explain\\n" +
+      "Examples: The Deepest Hole Ever Dug — What They Found Terrified Scientists\\n\\n" +
+      "RULES:\\n" +
+      "1. Every title must create a CURIOSITY GAP — the viewer must feel they NEED the answer\\n" +
+      "2. Use these power words: UNTOLD, DARK, REAL, TRUTH, HIDDEN, VANISHED, CLASSIFIED, FORGOTTEN\\n" +
+      "3. Include SPECIFIC REAL details — real dates, real names, real places whenever possible\\n" +
+      "4. Title length: 55-80 characters\\n" +
+      "5. NEVER use: How to, Tips for, Guide to, Tutorial\\n" +
+      "6. Every hook must START WITH THE END — the most shocking moment of the story first\\n" +
+      "7. Avoid living celebrities, trademarked brands, politically divisive topics\\n\\n" +
+      "Return ONLY a valid JSON array, no markdown:\\n" +
+      "[{\\\"title\\\":\\\"The Man Who Saved The World — And Was Punished For It\\\",\\\"hook\\\":\\\"On September 26 1983 one man decided not to follow orders. That decision prevented nuclear war. The Soviet Union gave him a reprimand.\\\",\\\"angle\\\":\\\"dark_history\\\",\\\"niche\\\":\"" + activeNiche + "\"}]"    }],
   }).then(function(res) {
     var text = res.content[0].text.trim().replace(/```json/g,"").replace(/```/g,"").trim();
     var start = text.indexOf("["), end = text.lastIndexOf("]");
